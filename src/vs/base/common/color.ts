@@ -259,6 +259,16 @@ export class Color {
 		return Color.Format.CSS.parseHex(hex) || Color.red;
 	}
 
+	static equals(a: Color | null, b: Color | null): boolean {
+		if (!a && !b) {
+			return true;
+		}
+		if (!a || !b) {
+			return false;
+		}
+		return a.equals(b);
+	}
+
 	readonly rgba: RGBA;
 	private _hsla?: HSLA;
 	get hsla(): HSLA {
@@ -432,8 +442,12 @@ export class Color {
 		));
 	}
 
+	private _toString?: string;
 	toString(): string {
-		return '' + Color.Format.CSS.format(this);
+		if (!this._toString) {
+			this._toString = Color.Format.CSS.format(this);
+		}
+		return this._toString;
 	}
 
 	static getLighterColor(of: Color, relative: Color, factor?: number): Color {

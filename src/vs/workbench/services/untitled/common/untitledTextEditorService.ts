@@ -12,7 +12,7 @@ import { Event, Emitter } from 'vs/base/common/event';
 import { ResourceMap } from 'vs/base/common/map';
 import { Schemas } from 'vs/base/common/network';
 import { Disposable, DisposableStore } from 'vs/base/common/lifecycle';
-import { registerSingleton } from 'vs/platform/instantiation/common/extensions';
+import { InstantiationType, registerSingleton } from 'vs/platform/instantiation/common/extensions';
 
 export const IUntitledTextEditorService = createDecorator<IUntitledTextEditorService>('untitledTextEditorService');
 
@@ -25,9 +25,9 @@ export interface INewUntitledTextEditorOptions {
 	initialValue?: string;
 
 	/**
-	 * Preferred language mode to use when saving the untitled editor.
+	 * Preferred language id to use when saving the untitled editor.
 	 */
-	mode?: string;
+	languageId?: string;
 
 	/**
 	 * Preferred encoding to use when saving the untitled editor.
@@ -56,7 +56,7 @@ export interface INewUntitledTextEditorWithAssociatedResourceOptions extends INe
 	 * Note: currently it is not possible to specify the `scheme` to use. The
 	 * untitled editor will saved to the default local or remote resource.
 	 */
-	associatedResource?: { authority: string; path: string; query: string; fragment: string; }
+	associatedResource?: { authority: string; path: string; query: string; fragment: string };
 }
 
 type IInternalUntitledTextEditorOptions = IExistingUntitledTextEditorOptions & INewUntitledTextEditorWithAssociatedResourceOptions;
@@ -112,6 +112,11 @@ export interface IUntitledTextEditorModelManager {
 	resolve(options?: INewUntitledTextEditorOptions): Promise<IUntitledTextEditorModel>;
 	resolve(options?: INewUntitledTextEditorWithAssociatedResourceOptions): Promise<IUntitledTextEditorModel>;
 	resolve(options?: IExistingUntitledTextEditorOptions): Promise<IUntitledTextEditorModel>;
+
+	/**
+	 * Figures out if the given resource has an associated resource or not.
+	 */
+	isUntitledWithAssociatedResource(resource: URI): boolean;
 }
 
 export interface IUntitledTextEditorService extends IUntitledTextEditorModelManager {
@@ -122,6 +127,8 @@ export interface IUntitledTextEditorService extends IUntitledTextEditorModelMana
 export class UntitledTextEditorService extends Disposable implements IUntitledTextEditorService {
 
 	declare readonly _serviceBrand: undefined;
+
+	private static readonly UNTITLED_WITHOUT_ASSOCIATED_RESOURCE_REGEX = /Untitled-\d+/;
 
 	private readonly _onDidChangeDirty = this._register(new Emitter<IUntitledTextEditorModel>());
 	readonly onDidChangeDirty = this._onDidChangeDirty.event;
@@ -194,13 +201,13 @@ export class UntitledTextEditorService extends Disposable implements IUntitledTe
 			}
 		}
 
-		// Language mode
-		if (options.mode) {
-			massagedOptions.mode = options.mode;
+		// Language id
+		if (options.languageId) {
+			massagedOptions.languageId = options.languageId;
 		} else if (!massagedOptions.associatedResource) {
 			const configuration = this.configurationService.getValue<IFilesConfiguration>();
 			if (configuration.files?.defaultLanguage) {
-				massagedOptions.mode = configuration.files.defaultLanguage;
+				massagedOptions.languageId = configuration.files.defaultLanguage;
 			}
 		}
 
@@ -224,7 +231,7 @@ export class UntitledTextEditorService extends Disposable implements IUntitledTe
 		}
 
 		// Create new model with provided options
-		const model = this._register(this.instantiationService.createInstance(UntitledTextEditorModel, untitledResource, !!options.associatedResource, options.initialValue, options.mode, options.encoding));
+		const model = this._register(this.instantiationService.createInstance(UntitledTextEditorModel, untitledResource, !!options.associatedResource, options.initialValue, options.languageId, options.encoding));
 
 		this.registerModel(model);
 
@@ -259,6 +266,10 @@ export class UntitledTextEditorService extends Disposable implements IUntitledTe
 			this._onDidChangeDirty.fire(model);
 		}
 	}
+
+	isUntitledWithAssociatedResource(resource: URI): boolean {
+		return resource.scheme === Schemas.untitled && resource.path.length > 1 && !UntitledTextEditorService.UNTITLED_WITHOUT_ASSOCIATED_RESOURCE_REGEX.test(resource.path);
+	}
 }
 
-registerSingleton(IUntitledTextEditorService, UntitledTextEditorService, true);
+registerSingleton(IUntitledTextEditorService, UntitledTextEditorService, InstantiationType.Delayed);

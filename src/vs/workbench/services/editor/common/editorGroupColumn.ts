@@ -3,40 +3,44 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { IConfigurationService } from 'vs/platform/configuration/common/configuration';
 import { GroupIdentifier } from 'vs/workbench/common/editor';
-import { IEditorGroupsService, GroupsOrder, IEditorGroup } from 'vs/workbench/services/editor/common/editorGroupsService';
-import { ACTIVE_GROUP, SIDE_GROUP } from 'vs/workbench/services/editor/common/editorService';
+import { IEditorGroupsService, GroupsOrder, IEditorGroup, preferredSideBySideGroupDirection } from 'vs/workbench/services/editor/common/editorGroupsService';
+import { ACTIVE_GROUP, ACTIVE_GROUP_TYPE, SIDE_GROUP, SIDE_GROUP_TYPE } from 'vs/workbench/services/editor/common/editorService';
 
 /**
  * A way to address editor groups through a column based system
  * where `0` is the first column. Will fallback to `SIDE_GROUP`
- * in case the column does not exist yet.
+ * in case the column is invalid.
  */
 export type EditorGroupColumn = number;
 
-export function columnToEditorGroup(editorGroupService: IEditorGroupsService, column?: EditorGroupColumn): GroupIdentifier {
-	if (typeof column !== 'number' || column === ACTIVE_GROUP) {
-		return ACTIVE_GROUP; // prefer active group when position is undefined or passed in as such
+export function columnToEditorGroup(editorGroupService: IEditorGroupsService, configurationService: IConfigurationService, column = ACTIVE_GROUP): GroupIdentifier | ACTIVE_GROUP_TYPE | SIDE_GROUP_TYPE {
+	if (column === ACTIVE_GROUP || column === SIDE_GROUP) {
+		return column; // return early for when column is well known
 	}
 
-	const groups = editorGroupService.getGroups(GroupsOrder.GRID_APPEARANCE);
+	let groupInColumn = editorGroupService.getGroups(GroupsOrder.GRID_APPEARANCE)[column];
 
-	let candidateGroup = groups[column];
-	if (candidateGroup) {
-		return candidateGroup.id; // found direct match
+	// If a column is asked for that does not exist, we create up to 9 columns in accordance
+	// to what `ViewColumn` provides and otherwise fallback to `SIDE_GROUP`.
+
+	if (!groupInColumn && column < 9) {
+		for (let i = 0; i <= column; i++) {
+			const editorGroups = editorGroupService.getGroups(GroupsOrder.GRID_APPEARANCE);
+			if (!editorGroups[i]) {
+				editorGroupService.addGroup(editorGroups[i - 1], preferredSideBySideGroupDirection(configurationService));
+			}
+		}
+
+		groupInColumn = editorGroupService.getGroups(GroupsOrder.GRID_APPEARANCE)[column];
 	}
 
-	let firstGroup = groups[0];
-	if (groups.length === 1 && firstGroup.count === 0) {
-		return firstGroup.id; // first editor should always open in first group independent from position provided
-	}
-
-	return SIDE_GROUP; // open to the side if group not found or we are instructed to
+	return groupInColumn?.id ?? SIDE_GROUP; // finally open to the side when group not found
 }
 
 export function editorGroupToColumn(editorGroupService: IEditorGroupsService, editorGroup: IEditorGroup | GroupIdentifier): EditorGroupColumn {
-	let group = (typeof editorGroup === 'number') ? editorGroupService.getGroup(editorGroup) : editorGroup;
-	group = group ?? editorGroupService.activeGroup;
+	const group = (typeof editorGroup === 'number') ? editorGroupService.getGroup(editorGroup) : editorGroup;
 
-	return editorGroupService.getGroups(GroupsOrder.GRID_APPEARANCE).indexOf(group);
+	return editorGroupService.getGroups(GroupsOrder.GRID_APPEARANCE).indexOf(group ?? editorGroupService.activeGroup);
 }

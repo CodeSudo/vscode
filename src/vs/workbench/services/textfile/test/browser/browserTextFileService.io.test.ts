@@ -16,12 +16,12 @@ import { URI } from 'vs/base/common/uri';
 import { join } from 'vs/base/common/path';
 import { UTF16le, detectEncodingByBOMFromBuffer, UTF8_with_bom, UTF16be, toCanonicalName } from 'vs/workbench/services/textfile/common/encoding';
 import { VSBuffer } from 'vs/base/common/buffer';
-import files from 'vs/workbench/services/textfile/test/browser/fixtures/files';
+import files from 'vs/workbench/services/textfile/test/common/fixtures/files';
 import createSuite from 'vs/workbench/services/textfile/test/common/textFileService.io.test';
 import { isWeb } from 'vs/base/common/platform';
 import { IWorkingCopyFileService, WorkingCopyFileService } from 'vs/workbench/services/workingCopy/common/workingCopyFileService';
 import { WorkingCopyService } from 'vs/workbench/services/workingCopy/common/workingCopyService';
-import { UriIdentityService } from 'vs/workbench/services/uriIdentity/common/uriIdentityService';
+import { UriIdentityService } from 'vs/platform/uriIdentity/common/uriIdentityService';
 
 // optimization: we don't need to run this suite in native environment,
 // because we have nativeTextFileService.io.test.ts for it,
@@ -36,7 +36,7 @@ if (isWeb) {
 
 		createSuite({
 			setup: async () => {
-				const instantiationService = workbenchInstantiationService();
+				const instantiationService = workbenchInstantiationService(undefined, disposables);
 
 				const logService = new NullLogService();
 				const fileService = new FileService(logService);
@@ -53,11 +53,11 @@ if (isWeb) {
 				service = instantiationService.createChild(collection).createInstance(TestBrowserTextFileServiceWithEncodingOverrides);
 
 				await fileProvider.mkdir(URI.file(testDir));
-				for (let fileName in files) {
+				for (const fileName in files) {
 					await fileProvider.writeFile(
 						URI.file(join(testDir, fileName)),
 						files[fileName],
-						{ create: true, overwrite: false, unlock: false }
+						{ create: true, overwrite: false, unlock: false, atomic: false }
 					);
 				}
 

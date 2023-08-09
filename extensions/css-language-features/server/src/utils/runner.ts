@@ -8,7 +8,7 @@ import { RuntimeEnvironment } from '../cssServer';
 
 export function formatError(message: string, err: any): string {
 	if (err instanceof Error) {
-		let error = <Error>err;
+		const error = <Error>err;
 		return `${message}: ${error.message}\n${error.stack}`;
 	} else if (typeof err === 'string') {
 		return `${message}: ${err}`;
@@ -23,6 +23,7 @@ export function runSafeAsync<T>(runtime: RuntimeEnvironment, func: () => Thenabl
 		runtime.timer.setImmediate(() => {
 			if (token.isCancellationRequested) {
 				resolve(cancelValue());
+				return;
 			}
 			return func().then(result => {
 				if (token.isCancellationRequested) {

@@ -8,11 +8,12 @@ import { Disposable } from 'vs/base/common/lifecycle';
 import { localize } from 'vs/nls';
 import { registerAction2 } from 'vs/platform/actions/common/actions';
 import { SyncDescriptor } from 'vs/platform/instantiation/common/descriptors';
-import { registerSingleton } from 'vs/platform/instantiation/common/extensions';
+import { InstantiationType, registerSingleton } from 'vs/platform/instantiation/common/extensions';
 import { Registry } from 'vs/platform/registry/common/platform';
 import { EditorPaneDescriptor, IEditorPaneRegistry } from 'vs/workbench/browser/editor';
 import { Extensions as WorkbenchExtensions, IWorkbenchContribution, IWorkbenchContributionsRegistry } from 'vs/workbench/common/contributions';
-import { EditorExtensions, IEditorInput, IEditorFactoryRegistry } from 'vs/workbench/common/editor';
+import { EditorExtensions, IEditorFactoryRegistry } from 'vs/workbench/common/editor';
+import { EditorInput } from 'vs/workbench/common/editor/editorInput';
 import { IEditorGroup, IEditorGroupsService } from 'vs/workbench/services/editor/common/editorGroupsService';
 import { LifecyclePhase } from 'vs/workbench/services/lifecycle/common/lifecycle';
 import { HideWebViewEditorFindCommand, ReloadWebviewAction, ShowWebViewEditorFindWidgetAction, WebViewEditorFindNextCommand, WebViewEditorFindPreviousCommand } from './webviewCommands';
@@ -52,7 +53,7 @@ class WebviewPanelContribution extends Disposable implements IWorkbenchContribut
 	}
 
 	private onEditorOpening(
-		editor: IEditorInput,
+		editor: EditorInput,
 		group: IEditorGroup
 	): void {
 		if (!(editor instanceof WebviewInput) || editor.typeId !== WebviewInput.typeId) {
@@ -87,7 +88,7 @@ Registry.as<IEditorFactoryRegistry>(EditorExtensions.EditorFactory).registerEdit
 	WebviewEditorInputSerializer.ID,
 	WebviewEditorInputSerializer);
 
-registerSingleton(IWebviewWorkbenchService, WebviewEditorService, true);
+registerSingleton(IWebviewWorkbenchService, WebviewEditorService, InstantiationType.Delayed);
 
 registerAction2(ShowWebViewEditorFindWidgetAction);
 registerAction2(HideWebViewEditorFindCommand);

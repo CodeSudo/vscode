@@ -13,7 +13,7 @@ import { IEditorGroup, IEditorGroupsService } from 'vs/workbench/services/editor
 import { IStorageService, StorageScope, StorageTarget } from 'vs/platform/storage/common/storage';
 import { LRUCache, Touch } from 'vs/base/common/map';
 import { URI } from 'vs/base/common/uri';
-import { Event } from 'vs/base/common/event';
+import { Emitter, Event } from 'vs/base/common/event';
 import { isEmptyObject } from 'vs/base/common/types';
 import { DEFAULT_EDITOR_MIN_DIMENSIONS, DEFAULT_EDITOR_MAX_DIMENSIONS } from 'vs/workbench/browser/parts/editor/editor';
 import { MementoObject } from 'vs/workbench/common/memento';
@@ -22,7 +22,8 @@ import { indexOfPath } from 'vs/base/common/extpath';
 import { Disposable, IDisposable } from 'vs/base/common/lifecycle';
 import { IContextKeyService } from 'vs/platform/contextkey/common/contextkey';
 import { IEditorOptions } from 'vs/platform/editor/common/editor';
-import { ITextResourceConfigurationService } from 'vs/editor/common/services/textResourceConfigurationService';
+import { ITextResourceConfigurationChangeEvent, ITextResourceConfigurationService } from 'vs/editor/common/services/textResourceConfiguration';
+import { IBoundarySashes } from 'vs/base/browser/ui/sash/sash';
 
 /**
  * The base class of editors in the workbench. Editors register themselves for specific editor inputs.
@@ -47,14 +48,21 @@ import { ITextResourceConfigurationService } from 'vs/editor/common/services/tex
  */
 export abstract class EditorPane extends Composite implements IEditorPane {
 
+	//#region Events
+
+	readonly onDidChangeSizeConstraints = Event.None;
+
+	protected readonly _onDidChangeControl = this._register(new Emitter<void>());
+	readonly onDidChangeControl = this._onDidChangeControl.event;
+
+	//#endregion
+
 	private static readonly EDITOR_MEMENTOS = new Map<string, EditorMemento<any>>();
 
 	get minimumWidth() { return DEFAULT_EDITOR_MIN_DIMENSIONS.width; }
 	get maximumWidth() { return DEFAULT_EDITOR_MAX_DIMENSIONS.width; }
 	get minimumHeight() { return DEFAULT_EDITOR_MIN_DIMENSIONS.height; }
 	get maximumHeight() { return DEFAULT_EDITOR_MAX_DIMENSIONS.height; }
-
-	readonly onDidChangeSizeConstraints = Event.None;
 
 	protected _input: EditorInput | undefined;
 	get input(): EditorInput | undefined { return this._input; }
@@ -115,10 +123,11 @@ export abstract class EditorPane extends Composite implements IEditorPane {
 	 * resources associated with the input should be freed.
 	 *
 	 * This method can be called based on different contexts, e.g. when opening
-	 * a different editor control or when closing all editors in a group.
+	 * a different input or different editor control or when closing all editors
+	 * in a group.
 	 *
 	 * To monitor the lifecycle of editor inputs, you should not rely on this
-	 * method, rather refer to the listeners on `IEditorGroup` via `IEditorGroupService`.
+	 * method, rather refer to the listeners on `IEditorGroup` via `IEditorGroupsService`.
 	 */
 	clearInput(): void {
 		this._input = undefined;
@@ -154,6 +163,10 @@ export abstract class EditorPane extends Composite implements IEditorPane {
 		this._group = group;
 	}
 
+	setBoundarySashes(_sashes: IBoundarySashes) {
+		// Subclasses can implement
+	}
+
 	protected getEditorMemento<T>(editorGroupService: IEditorGroupsService, configurationService: ITextResourceConfigurationService, key: string, limit: number = 10): IEditorMemento<T> {
 		const mementoKey = `${this.getId()}${key}`;
 
@@ -164,6 +177,12 @@ export abstract class EditorPane extends Composite implements IEditorPane {
 		}
 
 		return editorMemento;
+	}
+
+	getViewState(): object | undefined {
+
+		// Subclasses to override
+		return undefined;
 	}
 
 	protected override saveState(): void {
@@ -209,16 +228,18 @@ export class EditorMemento<T> extends Disposable implements IEditorMemento<T> {
 	) {
 		super();
 
-		this.updateConfiguration();
+		this.updateConfiguration(undefined);
 		this.registerListeners();
 	}
 
 	private registerListeners(): void {
-		this._register(this.configurationService.onDidChangeConfiguration(() => this.updateConfiguration()));
+		this._register(this.configurationService.onDidChangeConfiguration(e => this.updateConfiguration(e)));
 	}
 
-	private updateConfiguration(): void {
-		this.shareEditorState = this.configurationService.getValue(undefined, 'workbench.editor.sharedViewState') === true;
+	private updateConfiguration(e: ITextResourceConfigurationChangeEvent | undefined): void {
+		if (!e || e.affectsConfiguration(undefined, 'workbench.editor.sharedViewState')) {
+			this.shareEditorState = this.configurationService.getValue(undefined, 'workbench.editor.sharedViewState') === true;
+		}
 	}
 
 	saveEditorState(group: IEditorGroup, resource: URI, state: T): void;
@@ -264,7 +285,7 @@ export class EditorMemento<T> extends Disposable implements IEditorMemento<T> {
 
 		const mementosForResource = cache.get(resource.toString());
 		if (mementosForResource) {
-			let mementoForResourceAndGroup = mementosForResource[group.id];
+			const mementoForResourceAndGroup = mementosForResource[group.id];
 
 			// Return state for group if present
 			if (mementoForResourceAndGroup) {

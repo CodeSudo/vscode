@@ -5,13 +5,14 @@
 
 import { distinct } from 'vs/base/common/arrays';
 import { Event } from 'vs/base/common/event';
+import { IMarkdownString } from 'vs/base/common/htmlContent';
 import { IDisposable, IReference } from 'vs/base/common/lifecycle';
 import { URI } from 'vs/base/common/uri';
+import * as nls from 'vs/nls';
 import { RawContextKey } from 'vs/platform/contextkey/common/contextkey';
 import { createDecorator } from 'vs/platform/instantiation/common/instantiation';
-import * as nls from 'vs/nls';
 import { IRevertOptions, ISaveOptions } from 'vs/workbench/common/editor';
-import { RegisteredEditorPriority, globMatchesResource, priorityToRank } from 'vs/workbench/services/editor/common/editorResolverService';
+import { globMatchesResource, priorityToRank, RegisteredEditorPriority } from 'vs/workbench/services/editor/common/editorResolverService';
 
 export const ICustomEditorService = createDecorator<ICustomEditorService>('customEditorService');
 
@@ -37,11 +38,11 @@ export interface ICustomEditorService {
 	getUserConfiguredCustomEditors(resource: URI): CustomEditorInfoCollection;
 
 	registerCustomEditorCapabilities(viewType: string, options: CustomEditorCapabilities): IDisposable;
-	getCustomEditorCapabilities(viewType: string): CustomEditorCapabilities | undefined
+	getCustomEditorCapabilities(viewType: string): CustomEditorCapabilities | undefined;
 }
 
 export interface ICustomEditorModelManager {
-	getAllModels(resource: URI): Promise<ICustomEditorModel[]>
+	getAllModels(resource: URI): Promise<ICustomEditorModel[]>;
 
 	get(resource: URI, viewType: string): Promise<ICustomEditorModel | undefined>;
 
@@ -57,7 +58,7 @@ export interface ICustomEditorModel extends IDisposable {
 	readonly resource: URI;
 	readonly backupId: string | undefined;
 
-	isReadonly(): boolean;
+	isReadonly(): boolean | IMarkdownString;
 	readonly onDidChangeReadonly: Event<void>;
 
 	isOrphaned(): boolean;

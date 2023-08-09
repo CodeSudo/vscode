@@ -3,127 +3,37 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import 'vs/css!./notebookOutline';
-import { Codicon } from 'vs/base/common/codicons';
-import { Emitter, Event } from 'vs/base/common/event';
-import { combinedDisposable, IDisposable, Disposable, DisposableStore, MutableDisposable, toDisposable } from 'vs/base/common/lifecycle';
-import { IThemeService, ThemeIcon } from 'vs/platform/theme/common/themeService';
-import { ICellViewModel } from 'vs/workbench/contrib/notebook/browser/notebookBrowser';
-import { NotebookEditor } from 'vs/workbench/contrib/notebook/browser/notebookEditor';
-import { CellKind } from 'vs/workbench/contrib/notebook/common/notebookCommon';
-import { IOutline, IOutlineComparator, IOutlineCreator, IOutlineListConfig, IOutlineService, IQuickPickDataSource, IQuickPickOutlineElement, OutlineChangeEvent, OutlineConfigKeys, OutlineTarget } from 'vs/workbench/services/outline/browser/outline';
-import { IWorkbenchContributionsRegistry, Extensions as WorkbenchExtensions } from 'vs/workbench/common/contributions';
-import { Registry } from 'vs/platform/registry/common/platform';
-import { LifecyclePhase } from 'vs/workbench/services/lifecycle/common/lifecycle';
-import { IEditorPane } from 'vs/workbench/common/editor';
-import { IKeyboardNavigationLabelProvider, IListVirtualDelegate } from 'vs/base/browser/ui/list/list';
-import { IDataSource, ITreeNode, ITreeRenderer } from 'vs/base/browser/ui/tree/tree';
-import { createMatches, FuzzyScore } from 'vs/base/common/filters';
-import { IconLabel, IIconLabelValueOptions } from 'vs/base/browser/ui/iconLabel/iconLabel';
-import { IListAccessibilityProvider } from 'vs/base/browser/ui/list/listWidget';
-import { IEditorOptions } from 'vs/platform/editor/common/editor';
-import { IEditorService, SIDE_GROUP } from 'vs/workbench/services/editor/common/editorService';
-import { IInstantiationService } from 'vs/platform/instantiation/common/instantiation';
-import { getIconClassesForModeId } from 'vs/editor/common/services/getIconClasses';
-import { IWorkbenchDataTreeOptions } from 'vs/platform/list/browser/listService';
 import { localize } from 'vs/nls';
-import { IMarkerService, MarkerSeverity } from 'vs/platform/markers/common/markers';
-import { listErrorForeground, listWarningForeground } from 'vs/platform/theme/common/colorRegistry';
-import { isEqual } from 'vs/base/common/resources';
+import { IIconLabelValueOptions, IconLabel } from 'vs/base/browser/ui/iconLabel/iconLabel';
+import { IKeyboardNavigationLabelProvider, IListVirtualDelegate } from 'vs/base/browser/ui/list/list';
+import { IListAccessibilityProvider } from 'vs/base/browser/ui/list/listWidget';
+import { IDataSource, ITreeNode, ITreeRenderer } from 'vs/base/browser/ui/tree/tree';
 import { IdleValue } from 'vs/base/common/async';
+import { Emitter, Event } from 'vs/base/common/event';
+import { FuzzyScore, createMatches } from 'vs/base/common/filters';
+import { Disposable, DisposableStore, IDisposable, toDisposable } from 'vs/base/common/lifecycle';
+import { ThemeIcon } from 'vs/base/common/themables';
+import { URI } from 'vs/base/common/uri';
+import { getIconClassesForLanguageId } from 'vs/editor/common/services/getIconClasses';
 import { IConfigurationService } from 'vs/platform/configuration/common/configuration';
-import { IConfigurationRegistry, Extensions as ConfigurationExtensions } from 'vs/platform/configuration/common/configurationRegistry';
-import * as marked from 'vs/base/common/marked/marked';
-import { renderMarkdownAsPlaintext } from 'vs/base/browser/markdownRenderer';
+import { Extensions as ConfigurationExtensions, IConfigurationRegistry } from 'vs/platform/configuration/common/configurationRegistry';
+import { IEditorOptions } from 'vs/platform/editor/common/editor';
+import { IInstantiationService } from 'vs/platform/instantiation/common/instantiation';
+import { IWorkbenchDataTreeOptions } from 'vs/platform/list/browser/listService';
+import { MarkerSeverity } from 'vs/platform/markers/common/markers';
+import { Registry } from 'vs/platform/registry/common/platform';
+import { listErrorForeground, listWarningForeground } from 'vs/platform/theme/common/colorRegistry';
+import { IThemeService } from 'vs/platform/theme/common/themeService';
+import { IWorkbenchContributionsRegistry, Extensions as WorkbenchExtensions } from 'vs/workbench/common/contributions';
+import { IEditorPane } from 'vs/workbench/common/editor';
+import { CellRevealType, INotebookEditorOptions, INotebookEditorPane } from 'vs/workbench/contrib/notebook/browser/notebookBrowser';
+import { NotebookEditor } from 'vs/workbench/contrib/notebook/browser/notebookEditor';
+import { NotebookCellOutlineProvider, OutlineEntry } from 'vs/workbench/contrib/notebook/browser/viewModel/notebookOutlineProvider';
+import { CellKind } from 'vs/workbench/contrib/notebook/common/notebookCommon';
+import { IEditorService, SIDE_GROUP } from 'vs/workbench/services/editor/common/editorService';
+import { LifecyclePhase } from 'vs/workbench/services/lifecycle/common/lifecycle';
+import { IOutline, IOutlineComparator, IOutlineCreator, IOutlineListConfig, IOutlineService, IQuickPickDataSource, IQuickPickOutlineElement, OutlineChangeEvent, OutlineConfigCollapseItemsValues, OutlineConfigKeys, OutlineTarget } from 'vs/workbench/services/outline/browser/outline';
 
-export interface IOutlineMarkerInfo {
-	readonly count: number;
-	readonly topSev: MarkerSeverity;
-}
-
-export class OutlineEntry {
-
-	private _children: OutlineEntry[] = [];
-	private _parent: OutlineEntry | undefined;
-	private _markerInfo: IOutlineMarkerInfo | undefined;
-
-	constructor(
-		readonly index: number,
-		readonly level: number,
-		readonly cell: ICellViewModel,
-		readonly label: string,
-		readonly icon: ThemeIcon
-	) { }
-
-	addChild(entry: OutlineEntry) {
-		this._children.push(entry);
-		entry._parent = this;
-	}
-
-	get parent(): OutlineEntry | undefined {
-		return this._parent;
-	}
-
-	get children(): Iterable<OutlineEntry> {
-		return this._children;
-	}
-
-	get markerInfo(): IOutlineMarkerInfo | undefined {
-		return this._markerInfo;
-	}
-
-	updateMarkers(markerService: IMarkerService): void {
-		if (this.cell.cellKind === CellKind.Code) {
-			// a code cell can have marker
-			const marker = markerService.read({ resource: this.cell.uri, severities: MarkerSeverity.Error | MarkerSeverity.Warning });
-			if (marker.length === 0) {
-				this._markerInfo = undefined;
-			} else {
-				const topSev = marker.find(a => a.severity === MarkerSeverity.Error)?.severity ?? MarkerSeverity.Warning;
-				this._markerInfo = { topSev, count: marker.length };
-			}
-		} else {
-			// a markdown cell can inherit markers from its children
-			let topChild: MarkerSeverity | undefined;
-			for (let child of this.children) {
-				child.updateMarkers(markerService);
-				if (child.markerInfo) {
-					topChild = !topChild ? child.markerInfo.topSev : Math.max(child.markerInfo.topSev, topChild);
-				}
-			}
-			this._markerInfo = topChild && { topSev: topChild, count: 0 };
-		}
-	}
-
-	clearMarkers(): void {
-		this._markerInfo = undefined;
-		for (let child of this.children) {
-			child.clearMarkers();
-		}
-	}
-
-	find(cell: ICellViewModel, parents: OutlineEntry[]): OutlineEntry | undefined {
-		if (cell.id === this.cell.id) {
-			return this;
-		}
-		parents.push(this);
-		for (let child of this.children) {
-			const result = child.find(cell, parents);
-			if (result) {
-				return result;
-			}
-		}
-		parents.pop();
-		return undefined;
-	}
-
-	asFlatList(bucket: OutlineEntry[]): void {
-		bucket.push(this);
-		for (let child of this.children) {
-			child.asFlatList(bucket);
-		}
-	}
-}
 
 class NotebookOutlineTemplate {
 
@@ -158,14 +68,16 @@ class NotebookOutlineRenderer implements ITreeRenderer<OutlineEntry, FuzzyScore,
 	}
 
 	renderElement(node: ITreeNode<OutlineEntry, FuzzyScore>, _index: number, template: NotebookOutlineTemplate, _height: number | undefined): void {
+		const extraClasses: string[] = [];
 		const options: IIconLabelValueOptions = {
 			matches: createMatches(node.filterData),
-			extraClasses: []
+			labelEscapeNewLines: true,
+			extraClasses,
 		};
 
-		if (node.element.cell.cellKind === CellKind.Code && this._themeService.getFileIconTheme().hasFileIcons) {
+		if (node.element.cell.cellKind === CellKind.Code && this._themeService.getFileIconTheme().hasFileIcons && !node.element.isExecuting) {
 			template.iconClass.className = '';
-			options.extraClasses?.push(...getIconClassesForModeId(node.element.cell.language ?? ''));
+			extraClasses.push(...getIconClassesForLanguageId(node.element.cell.language ?? ''));
 		} else {
 			template.iconClass.className = 'element-icon ' + ThemeIcon.asClassNameArray(node.element.icon).join(' ');
 		}
@@ -214,7 +126,7 @@ class NotebookOutlineAccessibility implements IListAccessibilityProvider<Outline
 }
 
 class NotebookNavigationLabelProvider implements IKeyboardNavigationLabelProvider<OutlineEntry> {
-	getKeyboardNavigationLabel(element: OutlineEntry): { toString(): string | undefined; } | { toString(): string | undefined; }[] | undefined {
+	getKeyboardNavigationLabel(element: OutlineEntry): { toString(): string | undefined } | { toString(): string | undefined }[] | undefined {
 		return element.label;
 	}
 }
@@ -239,19 +151,19 @@ class NotebookQuickPickProvider implements IQuickPickDataSource<OutlineEntry> {
 
 	getQuickPickElements(): IQuickPickOutlineElement<OutlineEntry>[] {
 		const bucket: OutlineEntry[] = [];
-		for (let entry of this._getEntries()) {
+		for (const entry of this._getEntries()) {
 			entry.asFlatList(bucket);
 		}
 		const result: IQuickPickOutlineElement<OutlineEntry>[] = [];
 		const { hasFileIcons } = this._themeService.getFileIconTheme();
-		for (let element of bucket) {
+		for (const element of bucket) {
 			// todo@jrieken it is fishy that codicons cannot be used with iconClasses
 			// but file icons can...
 			result.push({
 				element,
 				label: hasFileIcons ? element.label : `$(${element.icon.id}) ${element.label}`,
 				ariaLabel: element.label,
-				iconClasses: hasFileIcons ? getIconClassesForModeId(element.cell.language ?? '') : undefined,
+				iconClasses: hasFileIcons ? getIconClassesForLanguageId(element.cell.language ?? '') : undefined,
 			});
 		}
 		return result;
@@ -281,76 +193,66 @@ export class NotebookCellOutline implements IOutline<OutlineEntry> {
 
 	readonly onDidChange: Event<OutlineChangeEvent> = this._onDidChange.event;
 
-	private _entries: OutlineEntry[] = [];
-	private _activeEntry?: OutlineEntry;
+	get entries(): OutlineEntry[] {
+		return this._outlineProvider?.entries ?? [];
+	}
+
 	private readonly _entriesDisposables = new DisposableStore();
 
 	readonly config: IOutlineListConfig<OutlineEntry>;
+
 	readonly outlineKind = 'notebookCells';
 
 	get activeElement(): OutlineEntry | undefined {
-		return this._activeEntry;
+		return this._outlineProvider?.activeElement;
 	}
 
+	private _outlineProvider: NotebookCellOutlineProvider | undefined;
+
 	constructor(
-		private readonly _editor: NotebookEditor,
-		private readonly _target: OutlineTarget,
+		private readonly _editor: INotebookEditorPane,
+		_target: OutlineTarget,
 		@IInstantiationService instantiationService: IInstantiationService,
-		@IThemeService themeService: IThemeService,
 		@IEditorService private readonly _editorService: IEditorService,
-		@IMarkerService private readonly _markerService: IMarkerService,
-		@IConfigurationService private readonly _configurationService: IConfigurationService,
+		@IConfigurationService _configurationService: IConfigurationService,
 	) {
-		const selectionListener = new MutableDisposable();
-		this._dispoables.add(selectionListener);
 		const installSelectionListener = () => {
-			if (!_editor.viewModel) {
-				selectionListener.clear();
+			const notebookEditor = _editor.getControl();
+			if (!notebookEditor?.hasModel()) {
+				this._outlineProvider?.dispose();
+				this._outlineProvider = undefined;
 			} else {
-				selectionListener.value = combinedDisposable(
-					_editor.viewModel.onDidChangeSelection(() => this._recomputeActive()),
-					_editor.viewModel.onDidChangeViewCells(() => this._recomputeState())
-				);
+				this._outlineProvider?.dispose();
+				this._outlineProvider = instantiationService.createInstance(NotebookCellOutlineProvider, notebookEditor, _target);
 			}
 		};
 
 		this._dispoables.add(_editor.onDidChangeModel(() => {
-			this._recomputeState();
 			installSelectionListener();
 		}));
 
-		this._dispoables.add(_configurationService.onDidChangeConfiguration(e => {
-			if (e.affectsConfiguration('notebook.outline.showCodeCells')) {
-				this._recomputeState();
-			}
-		}));
 
-		this._dispoables.add(themeService.onDidFileIconThemeChange(() => {
-			this._onDidChange.fire({});
-		}));
 
-		this._recomputeState();
 		installSelectionListener();
-
-		const options: IWorkbenchDataTreeOptions<OutlineEntry, FuzzyScore> = {
-			collapseByDefault: _target === OutlineTarget.Breadcrumbs,
-			expandOnlyOnTwistieClick: true,
-			multipleSelectionSupport: false,
-			accessibilityProvider: new NotebookOutlineAccessibility(),
-			identityProvider: { getId: element => element.cell.id },
-			keyboardNavigationLabelProvider: new NotebookNavigationLabelProvider()
-		};
-
-		const treeDataSource: IDataSource<this, OutlineEntry> = { getChildren: parent => parent instanceof NotebookCellOutline ? this._entries : parent.children };
+		const treeDataSource: IDataSource<this, OutlineEntry> = { getChildren: parent => parent instanceof NotebookCellOutline ? (this._outlineProvider?.entries ?? []) : parent.children };
 		const delegate = new NotebookOutlineVirtualDelegate();
 		const renderers = [instantiationService.createInstance(NotebookOutlineRenderer)];
 		const comparator = new NotebookComparator();
 
+		const options: IWorkbenchDataTreeOptions<OutlineEntry, FuzzyScore> = {
+			collapseByDefault: _target === OutlineTarget.Breadcrumbs || (_target === OutlineTarget.OutlinePane && _configurationService.getValue(OutlineConfigKeys.collapseItems) === OutlineConfigCollapseItemsValues.Collapsed),
+			expandOnlyOnTwistieClick: true,
+			multipleSelectionSupport: false,
+			accessibilityProvider: new NotebookOutlineAccessibility(),
+			identityProvider: { getId: element => element.cell.uri.toString() },
+			keyboardNavigationLabelProvider: new NotebookNavigationLabelProvider()
+		};
+
 		this.config = {
 			breadcrumbsDataSource: {
 				getBreadcrumbElements: () => {
-					let result: OutlineEntry[] = [];
-					let candidate = this._activeEntry;
+					const result: OutlineEntry[] = [];
+					let candidate = this.activeElement;
 					while (candidate) {
 						result.unshift(candidate);
 						candidate = candidate.parent;
@@ -358,7 +260,7 @@ export class NotebookCellOutline implements IOutline<OutlineEntry> {
 					return result;
 				}
 			},
-			quickPickDataSource: instantiationService.createInstance(NotebookQuickPickProvider, () => this._entries),
+			quickPickDataSource: instantiationService.createInstance(NotebookQuickPickProvider, () => (this._outlineProvider?.entries ?? [])),
 			treeDataSource,
 			delegate,
 			renderers,
@@ -367,181 +269,20 @@ export class NotebookCellOutline implements IOutline<OutlineEntry> {
 		};
 	}
 
-	dispose(): void {
-		this._onDidChange.dispose();
-		this._dispoables.dispose();
-		this._entriesDisposables.dispose();
+	get uri(): URI | undefined {
+		return this._outlineProvider?.uri;
 	}
-
-	private _recomputeState(): void {
-		this._entriesDisposables.clear();
-		this._activeEntry = undefined;
-		this._entries.length = 0;
-
-		const { viewModel } = this._editor;
-		if (!viewModel) {
-			return;
-		}
-
-		let includeCodeCells = true;
-		if (this._target === OutlineTarget.OutlinePane) {
-			includeCodeCells = this._configurationService.getValue<boolean>('notebook.outline.showCodeCells');
-		} else if (this._target === OutlineTarget.Breadcrumbs) {
-			includeCodeCells = this._configurationService.getValue<boolean>('notebook.breadcrumbs.showCodeCells');
-		}
-
-		const focusedCellIndex = viewModel.getFocus().start;
-		const focused = viewModel.cellAt(focusedCellIndex)?.handle;
-		const entries: OutlineEntry[] = [];
-
-		for (let i = 0; i < viewModel.length; i++) {
-			const cell = viewModel.viewCells[i];
-			const isMarkdown = cell.cellKind === CellKind.Markup;
-			if (!isMarkdown && !includeCodeCells) {
-				continue;
-			}
-
-			// The cap the amount of characters that we look at and use the following logic
-			// - for MD prefer headings (each header is an entry)
-			// - otherwise use the first none-empty line of the cell (MD or code)
-			let content = cell.getText().substr(0, 10_000);
-			let hasHeader = false;
-
-			if (isMarkdown) {
-				for (const token of marked.lexer(content, { gfm: true })) {
-					if (token.type === 'heading') {
-						hasHeader = true;
-						entries.push(new OutlineEntry(entries.length, token.depth, cell, renderMarkdownAsPlaintext({ value: token.text }).trim(), Codicon.markdown));
-					}
-				}
-				if (!hasHeader) {
-					content = renderMarkdownAsPlaintext({ value: content });
-				}
-			}
-
-			if (!hasHeader) {
-				const lineMatch = content.match(/^.*\w+.*\w*$/m);
-				let preview: string;
-				if (!lineMatch) {
-					preview = localize('empty', "empty cell");
-				} else {
-					preview = lineMatch[0].trim();
-					if (preview.length >= 64) {
-						preview = preview.slice(0, 64) + '…';
-					}
-				}
-
-				entries.push(new OutlineEntry(entries.length, 7, cell, preview, isMarkdown ? Codicon.markdown : Codicon.code));
-			}
-
-			if (cell.handle === focused) {
-				this._activeEntry = entries[entries.length - 1];
-			}
-
-			// send an event whenever any of the cells change
-			this._entriesDisposables.add(cell.model.onDidChangeContent(() => {
-				this._recomputeState();
-				this._onDidChange.fire({});
-			}));
-		}
-
-		// build a tree from the list of entries
-		if (entries.length > 0) {
-			let result: OutlineEntry[] = [entries[0]];
-			let parentStack: OutlineEntry[] = [entries[0]];
-
-			for (let i = 1; i < entries.length; i++) {
-				let entry = entries[i];
-
-				while (true) {
-					const len = parentStack.length;
-					if (len === 0) {
-						// root node
-						result.push(entry);
-						parentStack.push(entry);
-						break;
-
-					} else {
-						let parentCandidate = parentStack[len - 1];
-						if (parentCandidate.level < entry.level) {
-							parentCandidate.addChild(entry);
-							parentStack.push(entry);
-							break;
-						} else {
-							parentStack.pop();
-						}
-					}
-				}
-			}
-			this._entries = result;
-		}
-
-		// feature: show markers with each cell
-		const markerServiceListener = new MutableDisposable();
-		this._entriesDisposables.add(markerServiceListener);
-		const updateMarkerUpdater = () => {
-			const doUpdateMarker = (clear: boolean) => {
-				for (let entry of this._entries) {
-					if (clear) {
-						entry.clearMarkers();
-					} else {
-						entry.updateMarkers(this._markerService);
-					}
-				}
-			};
-			if (this._configurationService.getValue(OutlineConfigKeys.problemsEnabled)) {
-				markerServiceListener.value = this._markerService.onMarkerChanged(e => {
-					if (e.some(uri => viewModel.viewCells.some(cell => isEqual(cell.uri, uri)))) {
-						doUpdateMarker(false);
-						this._onDidChange.fire({});
-					}
-				});
-				doUpdateMarker(false);
-			} else {
-				markerServiceListener.clear();
-				doUpdateMarker(true);
-			}
-		};
-		updateMarkerUpdater();
-		this._entriesDisposables.add(this._configurationService.onDidChangeConfiguration(e => {
-			if (e.affectsConfiguration(OutlineConfigKeys.problemsEnabled)) {
-				updateMarkerUpdater();
-				this._onDidChange.fire({});
-			}
-		}));
-
-		this._onDidChange.fire({});
-	}
-
-	private _recomputeActive(): void {
-		let newActive: OutlineEntry | undefined;
-		const { viewModel } = this._editor;
-
-		if (viewModel) {
-			const cell = viewModel.cellAt(viewModel.getFocus().start);
-			if (cell) {
-				for (let entry of this._entries) {
-					newActive = entry.find(cell, []);
-					if (newActive) {
-						break;
-					}
-				}
-			}
-		}
-		if (newActive !== this._activeEntry) {
-			this._activeEntry = newActive;
-			this._onDidChange.fire({ affectOnlyActiveElement: true });
-		}
-	}
-
 	get isEmpty(): boolean {
-		return this._entries.length === 0;
+		return this._outlineProvider?.isEmpty ?? true;
 	}
-
 	async reveal(entry: OutlineEntry, options: IEditorOptions, sideBySide: boolean): Promise<void> {
 		await this._editorService.openEditor({
 			resource: entry.cell.uri,
-			options: { ...options, override: this._editor.input?.editorId },
+			options: {
+				...options,
+				override: this._editor.input?.editorId,
+				cellRevealType: CellRevealType.NearTopIfOutsideViewport
+			} as INotebookEditorOptions,
 		}, sideBySide ? SIDE_GROUP : undefined);
 	}
 
@@ -561,16 +302,23 @@ export class NotebookCellOutline implements IOutline<OutlineEntry> {
 
 	captureViewState(): IDisposable {
 		const widget = this._editor.getControl();
-		let viewState = widget?.getEditorViewState();
+		const viewState = widget?.getEditorViewState();
 		return toDisposable(() => {
 			if (viewState) {
 				widget?.restoreListViewState(viewState);
 			}
 		});
 	}
+
+	dispose(): void {
+		this._onDidChange.dispose();
+		this._dispoables.dispose();
+		this._entriesDisposables.dispose();
+		this._outlineProvider?.dispose();
+	}
 }
 
-class NotebookOutlineCreator implements IOutlineCreator<NotebookEditor, OutlineEntry> {
+export class NotebookOutlineCreator implements IOutlineCreator<NotebookEditor, OutlineEntry> {
 
 	readonly dispose: () => void;
 

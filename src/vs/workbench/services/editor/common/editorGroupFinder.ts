@@ -6,19 +6,20 @@
 import { IConfigurationService } from 'vs/platform/configuration/common/configuration';
 import { EditorActivation } from 'vs/platform/editor/common/editor';
 import { ServicesAccessor } from 'vs/platform/instantiation/common/instantiation';
-import { IEditorInputWithOptions, isEditorInputWithOptions, IUntypedEditorInput } from 'vs/workbench/common/editor';
+import { EditorInputWithOptions, isEditorInputWithOptions, IUntypedEditorInput, isEditorInput, EditorInputCapabilities } from 'vs/workbench/common/editor';
+import { EditorInput } from 'vs/workbench/common/editor/editorInput';
 import { IEditorGroup, GroupsOrder, preferredSideBySideGroupDirection, IEditorGroupsService } from 'vs/workbench/services/editor/common/editorGroupsService';
 import { PreferredGroup, SIDE_GROUP } from 'vs/workbench/services/editor/common/editorService';
 
 /**
  * Finds the target `IEditorGroup` given the instructions provided
  * that is best for the editor and matches the preferred group if
- * posisble.
+ * possible.
  */
 export function findGroup(accessor: ServicesAccessor, editor: IUntypedEditorInput, preferredGroup: PreferredGroup | undefined): [IEditorGroup, EditorActivation | undefined];
-export function findGroup(accessor: ServicesAccessor, editor: IEditorInputWithOptions, preferredGroup: PreferredGroup | undefined): [IEditorGroup, EditorActivation | undefined];
-export function findGroup(accessor: ServicesAccessor, editor: IEditorInputWithOptions | IUntypedEditorInput, preferredGroup: PreferredGroup | undefined): [IEditorGroup, EditorActivation | undefined];
-export function findGroup(accessor: ServicesAccessor, editor: IEditorInputWithOptions | IUntypedEditorInput, preferredGroup: PreferredGroup | undefined): [IEditorGroup, EditorActivation | undefined] {
+export function findGroup(accessor: ServicesAccessor, editor: EditorInputWithOptions, preferredGroup: PreferredGroup | undefined): [IEditorGroup, EditorActivation | undefined];
+export function findGroup(accessor: ServicesAccessor, editor: EditorInputWithOptions | IUntypedEditorInput, preferredGroup: PreferredGroup | undefined): [IEditorGroup, EditorActivation | undefined];
+export function findGroup(accessor: ServicesAccessor, editor: EditorInputWithOptions | IUntypedEditorInput, preferredGroup: PreferredGroup | undefined): [IEditorGroup, EditorActivation | undefined] {
 	const editorGroupService = accessor.get(IEditorGroupsService);
 	const configurationService = accessor.get(IConfigurationService);
 
@@ -48,24 +49,33 @@ export function findGroup(accessor: ServicesAccessor, editor: IEditorInputWithOp
 	return [group, activation];
 }
 
-function doFindGroup(input: IEditorInputWithOptions | IUntypedEditorInput, preferredGroup: PreferredGroup | undefined, editorGroupService: IEditorGroupsService, configurationService: IConfigurationService): IEditorGroup {
+function doFindGroup(input: EditorInputWithOptions | IUntypedEditorInput, preferredGroup: PreferredGroup | undefined, editorGroupService: IEditorGroupsService, configurationService: IConfigurationService): IEditorGroup {
 	let group: IEditorGroup | undefined;
-	let editor = isEditorInputWithOptions(input) ? input.editor : input;
-	let options = input.options;
+	const editor = isEditorInputWithOptions(input) ? input.editor : input;
+	const options = input.options;
 
 	// Group: Instance of Group
 	if (preferredGroup && typeof preferredGroup !== 'number') {
 		group = preferredGroup;
 	}
 
-	// Group: Side by Side
-	else if (preferredGroup === SIDE_GROUP) {
-		group = doFindSideBySideGroup(editorGroupService, configurationService);
-	}
-
 	// Group: Specific Group
 	else if (typeof preferredGroup === 'number' && preferredGroup >= 0) {
 		group = editorGroupService.getGroup(preferredGroup);
+	}
+
+	// Group: Side by Side
+	else if (preferredGroup === SIDE_GROUP) {
+		const direction = preferredSideBySideGroupDirection(configurationService);
+
+		let candidateGroup = editorGroupService.findGroup({ direction });
+		if (!candidateGroup || isGroupLockedForEditor(candidateGroup, editor)) {
+			// Create new group either when the candidate group
+			// is locked or was not found in the direction
+			candidateGroup = editorGroupService.addGroup(editorGroupService.activeGroup, direction);
+		}
+
+		group = candidateGroup;
 	}
 
 	// Group: Unspecified without a specific index to open
@@ -75,7 +85,7 @@ function doFindGroup(input: IEditorInputWithOptions | IUntypedEditorInput, prefe
 		// Respect option to reveal an editor if it is already visible in any group
 		if (options?.revealIfVisible) {
 			for (const lastActiveGroup of groupsByLastActive) {
-				if (lastActiveGroup.isActive(editor)) {
+				if (isActive(lastActiveGroup, editor)) {
 					group = lastActiveGroup;
 					break;
 				}
@@ -84,13 +94,15 @@ function doFindGroup(input: IEditorInputWithOptions | IUntypedEditorInput, prefe
 
 		// Respect option to reveal an editor if it is open (not necessarily visible)
 		// Still prefer to reveal an editor in a group where the editor is active though.
+		// We also try to reveal an editor if it has the `Singleton` capability which
+		// indicates that the same editor cannot be opened across groups.
 		if (!group) {
-			if (options?.revealIfOpened || configurationService.getValue<boolean>('workbench.editor.revealIfOpen')) {
+			if (options?.revealIfOpened || configurationService.getValue<boolean>('workbench.editor.revealIfOpen') || (isEditorInput(editor) && editor.hasCapability(EditorInputCapabilities.Singleton))) {
 				let groupWithInputActive: IEditorGroup | undefined = undefined;
 				let groupWithInputOpened: IEditorGroup | undefined = undefined;
 
 				for (const group of groupsByLastActive) {
-					if (group.contains(editor)) {
+					if (isOpened(group, editor)) {
 						if (!groupWithInputOpened) {
 							groupWithInputOpened = group;
 						}
@@ -111,21 +123,73 @@ function doFindGroup(input: IEditorInputWithOptions | IUntypedEditorInput, prefe
 		}
 	}
 
-	// Fallback to active group if target not valid
+	// Fallback to active group if target not valid but avoid
+	// locked editor groups unless editor is already opened there
 	if (!group) {
-		group = editorGroupService.activeGroup;
+		let candidateGroup = editorGroupService.activeGroup;
+
+		// Locked group: find the next non-locked group
+		// going up the neigbours of the group or create
+		// a new group otherwise
+		if (isGroupLockedForEditor(candidateGroup, editor)) {
+			for (const group of editorGroupService.getGroups(GroupsOrder.MOST_RECENTLY_ACTIVE)) {
+				if (isGroupLockedForEditor(group, editor)) {
+					continue;
+				}
+
+				candidateGroup = group;
+				break;
+			}
+
+			if (isGroupLockedForEditor(candidateGroup, editor)) {
+				// Group is still locked, so we have to create a new
+				// group to the side of the candidate group
+				group = editorGroupService.addGroup(candidateGroup, preferredSideBySideGroupDirection(configurationService));
+			} else {
+				group = candidateGroup;
+			}
+		}
+
+		// Non-locked group: take as is
+		else {
+			group = candidateGroup;
+		}
 	}
 
 	return group;
 }
 
-function doFindSideBySideGroup(editorGroupService: IEditorGroupsService, configurationService: IConfigurationService): IEditorGroup {
-	const direction = preferredSideBySideGroupDirection(configurationService);
-
-	let neighbourGroup = editorGroupService.findGroup({ direction });
-	if (!neighbourGroup) {
-		neighbourGroup = editorGroupService.addGroup(editorGroupService.activeGroup, direction);
+function isGroupLockedForEditor(group: IEditorGroup, editor: EditorInput | IUntypedEditorInput): boolean {
+	if (!group.isLocked) {
+		// only relevant for locked editor groups
+		return false;
 	}
 
-	return neighbourGroup;
+	if (isOpened(group, editor)) {
+		// special case: the locked group contains
+		// the provided editor. in that case we do not want
+		// to open the editor in any different group.
+		return false;
+	}
+
+	// group is locked for this editor
+	return true;
+}
+
+function isActive(group: IEditorGroup, editor: EditorInput | IUntypedEditorInput): boolean {
+	if (!group.activeEditor) {
+		return false;
+	}
+
+	return group.activeEditor.matches(editor);
+}
+
+function isOpened(group: IEditorGroup, editor: EditorInput | IUntypedEditorInput): boolean {
+	for (const typedEditor of group.editors) {
+		if (typedEditor.matches(editor)) {
+			return true;
+		}
+	}
+
+	return false;
 }

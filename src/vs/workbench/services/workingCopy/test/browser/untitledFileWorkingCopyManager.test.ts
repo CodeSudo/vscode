@@ -5,6 +5,7 @@
 
 import * as assert from 'assert';
 import { bufferToStream, VSBuffer } from 'vs/base/common/buffer';
+import { DisposableStore } from 'vs/base/common/lifecycle';
 import { Schemas } from 'vs/base/common/network';
 import { URI } from 'vs/base/common/uri';
 import { IInstantiationService } from 'vs/platform/instantiation/common/instantiation';
@@ -16,13 +17,15 @@ import { TestInMemoryFileSystemProvider, TestServiceAccessor, workbenchInstantia
 
 suite('UntitledFileWorkingCopyManager', () => {
 
+	let disposables: DisposableStore;
 	let instantiationService: IInstantiationService;
 	let accessor: TestServiceAccessor;
 
 	let manager: IFileWorkingCopyManager<TestStoredFileWorkingCopyModel, TestUntitledFileWorkingCopyModel>;
 
 	setup(() => {
-		instantiationService = workbenchInstantiationService();
+		disposables = new DisposableStore();
+		instantiationService = workbenchInstantiationService(undefined, disposables);
 		accessor = instantiationService.createInstance(TestServiceAccessor);
 
 		accessor.fileService.registerProvider(Schemas.file, new TestInMemoryFileSystemProvider());
@@ -34,14 +37,15 @@ suite('UntitledFileWorkingCopyManager', () => {
 			new TestUntitledFileWorkingCopyModelFactory(),
 			accessor.fileService, accessor.lifecycleService, accessor.labelService, accessor.logService,
 			accessor.workingCopyFileService, accessor.workingCopyBackupService, accessor.uriIdentityService, accessor.fileDialogService,
-			accessor.textFileService, accessor.filesConfigurationService, accessor.workingCopyService, accessor.notificationService,
+			accessor.filesConfigurationService, accessor.workingCopyService, accessor.notificationService,
 			accessor.workingCopyEditorService, accessor.editorService, accessor.elevatedFileService, accessor.pathService,
-			accessor.environmentService, accessor.dialogService
+			accessor.environmentService, accessor.dialogService, accessor.decorationsService
 		);
 	});
 
 	teardown(() => {
 		manager.dispose();
+		disposables.dispose();
 	});
 
 	test('basics', async () => {
@@ -85,20 +89,24 @@ suite('UntitledFileWorkingCopyManager', () => {
 		for (const workingCopy of [workingCopy1, workingCopy2]) {
 			assert.strictEqual(workingCopy.capabilities, WorkingCopyCapabilities.Untitled);
 			assert.strictEqual(workingCopy.isDirty(), false);
+			assert.strictEqual(workingCopy.isModified(), false);
 			assert.ok(workingCopy.model);
 		}
 
 		workingCopy1.model?.updateContents('Hello World');
 
 		assert.strictEqual(workingCopy1.isDirty(), true);
+		assert.strictEqual(workingCopy1.isModified(), true);
 		assert.strictEqual(dirtyCounter, 1);
 
-		workingCopy1.model?.updateContents(''); // change to empty clears dirty flag
+		workingCopy1.model?.updateContents(''); // change to empty clears dirty/modified flags
 		assert.strictEqual(workingCopy1.isDirty(), false);
+		assert.strictEqual(workingCopy1.isModified(), false);
 		assert.strictEqual(dirtyCounter, 2);
 
 		workingCopy2.model?.fireContentChangeEvent({ isInitial: false });
 		assert.strictEqual(workingCopy2.isDirty(), true);
+		assert.strictEqual(workingCopy2.isModified(), true);
 		assert.strictEqual(dirtyCounter, 3);
 
 		workingCopy1.dispose();
@@ -114,6 +122,33 @@ suite('UntitledFileWorkingCopyManager', () => {
 		assert.strictEqual(disposeCounter, 2);
 	});
 
+	test('dirty - scratchpads are never dirty', async () => {
+		let dirtyCounter = 0;
+		manager.untitled.onDidChangeDirty(e => {
+			dirtyCounter++;
+		});
+
+		const workingCopy1 = await manager.resolve({
+			untitledResource: URI.from({ scheme: Schemas.untitled, path: `/myscratchpad` }),
+			isScratchpad: true
+		});
+
+		assert.strictEqual(workingCopy1.resource.scheme, Schemas.untitled);
+		assert.strictEqual(manager.untitled.workingCopies.length, 1);
+
+		workingCopy1.model?.updateContents('contents');
+		assert.strictEqual(workingCopy1.isDirty(), false);
+		assert.strictEqual(workingCopy1.isModified(), true);
+
+		workingCopy1.model?.fireContentChangeEvent({ isInitial: true });
+		assert.strictEqual(workingCopy1.isDirty(), false);
+		assert.strictEqual(workingCopy1.isModified(), false);
+
+		assert.strictEqual(dirtyCounter, 0);
+
+		workingCopy1.dispose();
+	});
+
 	test('resolve - with initial value', async () => {
 		let dirtyCounter = 0;
 		manager.untitled.onDidChangeDirty(e => {
@@ -122,14 +157,16 @@ suite('UntitledFileWorkingCopyManager', () => {
 
 		const workingCopy1 = await manager.untitled.resolve({ contents: { value: bufferToStream(VSBuffer.fromString('Hello World')) } });
 
+		assert.strictEqual(workingCopy1.isModified(), true);
 		assert.strictEqual(workingCopy1.isDirty(), true);
 		assert.strictEqual(dirtyCounter, 1);
 		assert.strictEqual(workingCopy1.model?.contents, 'Hello World');
 
 		workingCopy1.dispose();
 
-		const workingCopy2 = await manager.untitled.resolve({ contents: { value: bufferToStream(VSBuffer.fromString('Hello World')), markDirty: true } });
+		const workingCopy2 = await manager.untitled.resolve({ contents: { value: bufferToStream(VSBuffer.fromString('Hello World')), markModified: true } });
 
+		assert.strictEqual(workingCopy2.isModified(), true);
 		assert.strictEqual(workingCopy2.isDirty(), true);
 		assert.strictEqual(dirtyCounter, 2);
 		assert.strictEqual(workingCopy2.model?.contents, 'Hello World');
@@ -143,8 +180,9 @@ suite('UntitledFileWorkingCopyManager', () => {
 			dirtyCounter++;
 		});
 
-		const workingCopy = await manager.untitled.resolve({ contents: { value: bufferToStream(VSBuffer.fromString('Hello World')), markDirty: false } });
+		const workingCopy = await manager.untitled.resolve({ contents: { value: bufferToStream(VSBuffer.fromString('Hello World')), markModified: false } });
 
+		assert.strictEqual(workingCopy.isModified(), false);
 		assert.strictEqual(workingCopy.isDirty(), false);
 		assert.strictEqual(dirtyCounter, 0);
 		assert.strictEqual(workingCopy.model?.contents, 'Hello World');
@@ -222,7 +260,7 @@ suite('UntitledFileWorkingCopyManager', () => {
 		const workingCopy = await manager.untitled.resolve({ associatedResource: { path: '/some/associated.txt' } });
 		workingCopy.model?.updateContents('Simple Save with associated resource');
 
-		accessor.fileService.notExistsSet.set(URI.from({ scheme: Schemas.vscodeRemote, path: '/some/associated.txt' }), true);
+		accessor.fileService.notExistsSet.set(URI.from({ scheme: Schemas.file, path: '/some/associated.txt' }), true);
 
 		const result = await workingCopy.save();
 		assert.ok(result);
@@ -275,9 +313,9 @@ suite('UntitledFileWorkingCopyManager', () => {
 				new TestUntitledFileWorkingCopyModelFactory(),
 				accessor.fileService, accessor.lifecycleService, accessor.labelService, accessor.logService,
 				accessor.workingCopyFileService, accessor.workingCopyBackupService, accessor.uriIdentityService, accessor.fileDialogService,
-				accessor.textFileService, accessor.filesConfigurationService, accessor.workingCopyService, accessor.notificationService,
+				accessor.filesConfigurationService, accessor.workingCopyService, accessor.notificationService,
 				accessor.workingCopyEditorService, accessor.editorService, accessor.elevatedFileService, accessor.pathService,
-				accessor.environmentService, accessor.dialogService
+				accessor.environmentService, accessor.dialogService, accessor.decorationsService
 			);
 
 			const untitled1OriginalType = await manager.untitled.resolve();
@@ -297,9 +335,9 @@ suite('UntitledFileWorkingCopyManager', () => {
 				new TestUntitledFileWorkingCopyModelFactory(),
 				accessor.fileService, accessor.lifecycleService, accessor.labelService, accessor.logService,
 				accessor.workingCopyFileService, accessor.workingCopyBackupService, accessor.uriIdentityService, accessor.fileDialogService,
-				accessor.textFileService, accessor.filesConfigurationService, accessor.workingCopyService, accessor.notificationService,
+				accessor.filesConfigurationService, accessor.workingCopyService, accessor.notificationService,
 				accessor.workingCopyEditorService, accessor.editorService, accessor.elevatedFileService, accessor.pathService,
-				accessor.environmentService, accessor.dialogService
+				accessor.environmentService, accessor.dialogService, accessor.decorationsService
 			);
 
 			const result = await manager.untitled.resolve();

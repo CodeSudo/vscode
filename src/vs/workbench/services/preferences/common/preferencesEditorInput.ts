@@ -6,16 +6,10 @@
 import { Schemas } from 'vs/base/common/network';
 import { URI } from 'vs/base/common/uri';
 import * as nls from 'vs/nls';
-import { IEditorInput, IUntypedEditorInput } from 'vs/workbench/common/editor';
+import { IUntypedEditorInput } from 'vs/workbench/common/editor';
 import { EditorInput } from 'vs/workbench/common/editor/editorInput';
 import { IPreferencesService } from 'vs/workbench/services/preferences/common/preferences';
 import { Settings2EditorModel } from 'vs/workbench/services/preferences/common/preferencesModels';
-
-export interface IKeybindingsEditorSearchOptions {
-	searchValue: string;
-	recordKeybindings: boolean;
-	sortByPrecedence: boolean;
-}
 
 export class SettingsEditor2Input extends EditorInput {
 
@@ -35,7 +29,7 @@ export class SettingsEditor2Input extends EditorInput {
 		this._settingsModel = _preferencesService.createSettings2EditorModel();
 	}
 
-	override matches(otherInput: IEditorInput | IUntypedEditorInput): boolean {
+	override matches(otherInput: EditorInput | IUntypedEditorInput): boolean {
 		return super.matches(otherInput) || otherInput instanceof SettingsEditor2Input;
 	}
 

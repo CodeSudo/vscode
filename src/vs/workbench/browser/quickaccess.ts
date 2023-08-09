@@ -17,15 +17,19 @@ export const defaultQuickAccessContextKeyValue = 'inFilesPicker';
 export const defaultQuickAccessContext = ContextKeyExpr.and(inQuickPickContext, ContextKeyExpr.has(defaultQuickAccessContextKeyValue));
 
 export interface IWorkbenchQuickAccessConfiguration {
-	workbench: {
-		commandPalette: {
-			history: number;
-			preserveInput: boolean;
-		},
-		quickOpen: {
-			enableExperimentalNewVersion: boolean;
-			preserveInput: boolean;
-		}
+	readonly workbench: {
+		readonly commandPalette: {
+			readonly history: number;
+			readonly preserveInput: boolean;
+			readonly experimental: {
+				readonly suggestCommands: boolean;
+				readonly useSemanticSimilarity: boolean;
+			};
+		};
+		readonly quickOpen: {
+			readonly enableExperimentalNewVersion: boolean;
+			readonly preserveInput: boolean;
+		};
 	};
 }
 

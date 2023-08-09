@@ -44,12 +44,6 @@
 	 */
 	async function load(modulePaths, resultCallback, options) {
 
-		// Error handler (TODO@sandbox non-sandboxed only)
-		let showDevtoolsOnError = !!safeProcess.env['VSCODE_DEV'];
-		safeProcess.on('uncaughtException', function (/** @type {string | Error} */ error) {
-			onUnexpectedError(error, showDevtoolsOnError);
-		});
-
 		// Await window configuration from preload
 		const timeout = setTimeout(() => { console.error(`[resolve window config] Could not resolve window configuration within 10 seconds, but will continue to wait...`); }, 10000);
 		performance.mark('code/willWaitForWindowConfig');
@@ -65,26 +59,19 @@
 
 		// Developer settings
 		const {
-			forceDisableShowDevtoolsOnError,
 			forceEnableDeveloperKeybindings,
 			disallowReloadKeybinding,
 			removeDeveloperKeybindingsAfterLoad
 		} = typeof options?.configureDeveloperSettings === 'function' ? options.configureDeveloperSettings(configuration) : {
-			forceDisableShowDevtoolsOnError: false,
 			forceEnableDeveloperKeybindings: false,
 			disallowReloadKeybinding: false,
 			removeDeveloperKeybindingsAfterLoad: false
 		};
-		showDevtoolsOnError = safeProcess.env['VSCODE_DEV'] && !forceDisableShowDevtoolsOnError;
-		const enableDeveloperKeybindings = safeProcess.env['VSCODE_DEV'] || forceEnableDeveloperKeybindings;
+		const isDev = !!safeProcess.env['VSCODE_DEV'];
+		const enableDeveloperKeybindings = isDev || forceEnableDeveloperKeybindings;
 		let developerDeveloperKeybindingsDisposable;
 		if (enableDeveloperKeybindings) {
 			developerDeveloperKeybindingsDisposable = registerDeveloperKeybindings(disallowReloadKeybinding);
-		}
-
-		// Enable ASAR support (TODO@sandbox non-sandboxed only)
-		if (!safeProcess.sandboxed) {
-			globalThis.MonacoBootstrap.enableASARSupport(configuration.appRoot);
 		}
 
 		// Get the nls configuration into the process.env as early as possible
@@ -99,11 +86,6 @@
 
 		window.document.documentElement.setAttribute('lang', locale);
 
-		// Replace the patched electron fs with the original node fs for all AMD code (TODO@sandbox non-sandboxed only)
-		if (!safeProcess.sandboxed) {
-			require.define('fs', [], function () { return require.__$__nodeRequire('original-fs'); });
-		}
-
 		window['MonacoEnvironment'] = {};
 
 		const loaderConfig = {
@@ -113,35 +95,36 @@
 		};
 
 		// use a trusted types policy when loading via script tags
-		if (loaderConfig.preferScriptTags) {
-			loaderConfig.trustedTypesPolicy = window.trustedTypes?.createPolicy('amdLoader', {
-				createScriptURL(value) {
-					if (value.startsWith(window.location.origin)) {
-						return value;
-					}
-					throw new Error(`Invalid script url: ${value}`);
+		loaderConfig.trustedTypesPolicy = window.trustedTypes?.createPolicy('amdLoader', {
+			createScriptURL(value) {
+				if (value.startsWith(window.location.origin)) {
+					return value;
 				}
-			});
-		}
+				throw new Error(`Invalid script url: ${value}`);
+			}
+		});
 
-		// Enable loading of node modules:
-		// - sandbox: we list paths of webpacked modules to help the loader
-		// - non-sandbox: we signal that any module that does not begin with
-		//                `vs/` should be loaded using node.js require()
-		if (safeProcess.sandboxed) {
-			loaderConfig.paths = {
-				'vscode-textmate': `../node_modules/vscode-textmate/release/main`,
-				'vscode-oniguruma': `../node_modules/vscode-oniguruma/release/main`,
-				'xterm': `../node_modules/xterm/lib/xterm.js`,
-				'xterm-addon-search': `../node_modules/xterm-addon-search/lib/xterm-addon-search.js`,
-				'xterm-addon-unicode11': `../node_modules/xterm-addon-unicode11/lib/xterm-addon-unicode11.js`,
-				'xterm-addon-webgl': `../node_modules/xterm-addon-webgl/lib/xterm-addon-webgl.js`,
-				'iconv-lite-umd': `../node_modules/iconv-lite-umd/lib/iconv-lite-umd.js`,
-				'jschardet': `../node_modules/jschardet/dist/jschardet.min.js`,
-			};
-		} else {
-			loaderConfig.amdModulesPattern = /^vs\//;
-		}
+		// Teach the loader the location of the node modules we use in renderers
+		// This will enable to load these modules via <script> tags instead of
+		// using a fallback such as node.js require which does not exist in sandbox
+		const baseNodeModulesPath = isDev ? '../node_modules' : '../node_modules.asar';
+		loaderConfig.paths = {
+			'vscode-textmate': `${baseNodeModulesPath}/vscode-textmate/release/main.js`,
+			'vscode-oniguruma': `${baseNodeModulesPath}/vscode-oniguruma/release/main.js`,
+			'vsda': `${baseNodeModulesPath}/vsda/index.js`,
+			'xterm': `${baseNodeModulesPath}/xterm/lib/xterm.js`,
+			'xterm-addon-canvas': `${baseNodeModulesPath}/xterm-addon-canvas/lib/xterm-addon-canvas.js`,
+			'xterm-addon-image': `${baseNodeModulesPath}/xterm-addon-image/lib/xterm-addon-image.js`,
+			'xterm-addon-search': `${baseNodeModulesPath}/xterm-addon-search/lib/xterm-addon-search.js`,
+			'xterm-addon-serialize': `${baseNodeModulesPath}/xterm-addon-serialize/lib/xterm-addon-serialize.js`,
+			'xterm-addon-unicode11': `${baseNodeModulesPath}/xterm-addon-unicode11/lib/xterm-addon-unicode11.js`,
+			'xterm-addon-webgl': `${baseNodeModulesPath}/xterm-addon-webgl/lib/xterm-addon-webgl.js`,
+			'@vscode/iconv-lite-umd': `${baseNodeModulesPath}/@vscode/iconv-lite-umd/lib/iconv-lite-umd.js`,
+			'jschardet': `${baseNodeModulesPath}/jschardet/dist/jschardet.min.js`,
+			'@vscode/vscode-languagedetection': `${baseNodeModulesPath}/@vscode/vscode-languagedetection/dist/lib/index.js`,
+			'vscode-regexp-languagedetection': `${baseNodeModulesPath}/vscode-regexp-languagedetection/dist/index.js`,
+			'tas-client-umd': `${baseNodeModulesPath}/tas-client-umd/lib/tas-client-umd.js`
+		};
 
 		// Signal before require.config()
 		if (typeof options?.beforeLoaderConfig === 'function') {
@@ -164,11 +147,11 @@
 		}
 
 		// Actually require the main module as specified
-		require(modulePaths, async result => {
+		require(modulePaths, async firstModule => {
 			try {
 
 				// Callback only after process environment is resolved
-				const callbackResult = resultCallback(result, configuration);
+				const callbackResult = resultCallback(firstModule, configuration);
 				if (callbackResult instanceof Promise) {
 					await callbackResult;
 
@@ -183,7 +166,7 @@
 	}
 
 	/**
-	 * @param {boolean | undefined} disallowReloadKeybinding
+	 * @param {boolean | undefined} disallowReloadKeybinding
 	 * @returns {() => void}
 	 */
 	function registerDeveloperKeybindings(disallowReloadKeybinding) {
@@ -208,7 +191,7 @@
 		const TOGGLE_DEV_TOOLS_KB_ALT = '123'; // F12
 		const RELOAD_KB = (safeProcess.platform === 'darwin' ? 'meta-82' : 'ctrl-82'); // mac: Cmd-R, rest: Ctrl-R
 
-		/** @type {((e: KeyboardEvent) => void) | undefined} */
+		/** @type {((e: KeyboardEvent) => void) | undefined} */
 		let listener = function (e) {
 			const key = extractKey(e);
 			if (key === TOGGLE_DEV_TOOLS_KB || key === TOGGLE_DEV_TOOLS_KB_ALT) {

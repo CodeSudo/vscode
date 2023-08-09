@@ -3,14 +3,16 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { Codicon, iconRegistry } from 'vs/base/common/codicons';
+import { Codicon } from 'vs/base/common/codicons';
 import { Emitter, Event } from 'vs/base/common/event';
 import { Disposable } from 'vs/base/common/lifecycle';
 import Severity from 'vs/base/common/severity';
 import { IConfigurationService } from 'vs/platform/configuration/common/configuration';
 import { TerminalSettingId } from 'vs/platform/terminal/common/terminal';
 import { listErrorForeground, listWarningForeground } from 'vs/platform/theme/common/colorRegistry';
-import { IHoverAction } from 'vs/workbench/services/hover/browser/hover';
+import { spinningLoading } from 'vs/platform/theme/common/iconRegistry';
+import { ThemeIcon } from 'vs/base/common/themables';
+import { ITerminalStatus } from 'vs/workbench/contrib/terminal/common/terminal';
 
 /**
  * The set of _internal_ terminal statuses, other components building on the terminal should put
@@ -20,29 +22,8 @@ export const enum TerminalStatus {
 	Bell = 'bell',
 	Disconnected = 'disconnected',
 	RelaunchNeeded = 'relaunch-needed',
-}
-
-export interface ITerminalStatus {
-	/** An internal string ID used to identify the status. */
-	id: string;
-	/**
-	 * The severity of the status, this defines both the color and how likely the status is to be
-	 * the "primary status".
-	 */
-	severity: Severity;
-	/**
-	 * An icon representing the status, if this is not specified it will not show up on the terminal
-	 * tab and will use the generic `info` icon when hovering.
-	 */
-	icon?: Codicon;
-	/**
-	 * What to show for this status in the terminal's hover.
-	 */
-	tooltip?: string | undefined;
-	/**
-	 * Actions to expose on hover.
-	 */
-	hoverActions?: IHoverAction[];
+	EnvironmentVariableInfoChangesActive = 'env-var-info-changes-active',
+	ShellIntegrationAttentionNeeded = 'shell-integration-attention-needed'
 }
 
 export interface ITerminalStatusList {
@@ -57,6 +38,8 @@ export interface ITerminalStatusList {
 
 	/**
 	 * Adds a status to the list.
+	 * @param status The status object. Ideally a single status object that does not change will be
+	 * shared as this call will no-op if the status is already set (checked by by object reference).
 	 * @param duration An optional duration in milliseconds of the status, when specified the status
 	 * will remove itself when the duration elapses unless the status gets re-added.
 	 */
@@ -106,6 +89,11 @@ export class TerminalStatusList extends Disposable implements ITerminalStatusLis
 			const timeout = window.setTimeout(() => this.remove(status), duration);
 			this._statusTimeouts.set(status.id, timeout);
 		}
+		const existingStatus = this._statuses.get(status.id);
+		if (existingStatus && existingStatus !== status) {
+			this._onDidRemoveStatus.fire(existingStatus);
+			this._statuses.delete(existingStatus.id);
+		}
 		if (!this._statuses.has(status.id)) {
 			const oldPrimary = this.primary;
 			this._statuses.set(status.id, status);
@@ -141,23 +129,21 @@ export class TerminalStatusList extends Disposable implements ITerminalStatusLis
 	}
 
 	private _applyAnimationSetting(status: ITerminalStatus): ITerminalStatus {
-		if (!status.icon?.id.endsWith('~spin') || this._configurationService.getValue(TerminalSettingId.TabsEnableAnimation)) {
+		if (!status.icon || ThemeIcon.getModifier(status.icon) !== 'spin' || this._configurationService.getValue(TerminalSettingId.TabsEnableAnimation)) {
 			return status;
 		}
-		let id = status.icon.id.split('~')[0];
+		let icon;
 		// Loading without animation is just a curved line that doesn't mean anything
-		if (id === 'loading') {
-			id = 'play';
-		}
-		const codicon = iconRegistry.get(id);
-		if (!codicon) {
-			return status;
+		if (status.icon.id === spinningLoading.id) {
+			icon = Codicon.play;
+		} else {
+			icon = ThemeIcon.modify(status.icon, undefined);
 		}
 		// Clone the status when changing the icon so that setting changes are applied without a
 		// reload being needed
 		return {
 			...status,
-			icon: codicon
+			icon
 		};
 	}
 }

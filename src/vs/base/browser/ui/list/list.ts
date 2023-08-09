@@ -3,14 +3,16 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { GestureEvent } from 'vs/base/browser/touch';
-import { IKeyboardEvent } from 'vs/base/browser/keyboardEvent';
 import { IDragAndDropData } from 'vs/base/browser/dnd';
+import { IKeyboardEvent } from 'vs/base/browser/keyboardEvent';
+import { IMouseEvent } from 'vs/base/browser/mouseEvent';
+import { GestureEvent } from 'vs/base/browser/touch';
 
 export interface IListVirtualDelegate<T> {
 	getHeight(element: T): number;
 	getTemplateId(element: T): string;
 	hasDynamicHeight?(element: T): boolean;
+	getDynamicHeight?(element: T): number | null;
 	setDynamicHeight?(element: T, height: number): void;
 }
 
@@ -23,44 +25,48 @@ export interface IListRenderer<T, TTemplateData> {
 }
 
 export interface IListEvent<T> {
-	elements: T[];
-	indexes: number[];
-	browserEvent?: UIEvent;
+	readonly elements: readonly T[];
+	readonly indexes: readonly number[];
+	readonly browserEvent?: UIEvent;
+}
+
+export interface IListBrowserMouseEvent extends MouseEvent {
+	isHandledByList?: boolean;
 }
 
 export interface IListMouseEvent<T> {
-	browserEvent: MouseEvent;
-	element: T | undefined;
-	index: number | undefined;
+	readonly browserEvent: IListBrowserMouseEvent;
+	readonly element: T | undefined;
+	readonly index: number | undefined;
 }
 
 export interface IListTouchEvent<T> {
-	browserEvent: TouchEvent;
-	element: T | undefined;
-	index: number | undefined;
+	readonly browserEvent: TouchEvent;
+	readonly element: T | undefined;
+	readonly index: number | undefined;
 }
 
 export interface IListGestureEvent<T> {
-	browserEvent: GestureEvent;
-	element: T | undefined;
-	index: number | undefined;
+	readonly browserEvent: GestureEvent;
+	readonly element: T | undefined;
+	readonly index: number | undefined;
 }
 
 export interface IListDragEvent<T> {
-	browserEvent: DragEvent;
-	element: T | undefined;
-	index: number | undefined;
+	readonly browserEvent: DragEvent;
+	readonly element: T | undefined;
+	readonly index: number | undefined;
 }
 
 export interface IListContextMenuEvent<T> {
-	browserEvent: UIEvent;
-	element: T | undefined;
-	index: number | undefined;
-	anchor: HTMLElement | { x: number; y: number; };
+	readonly browserEvent: UIEvent;
+	readonly element: T | undefined;
+	readonly index: number | undefined;
+	readonly anchor: HTMLElement | IMouseEvent;
 }
 
 export interface IIdentityProvider<T> {
-	getId(element: T): { toString(): string; };
+	getId(element: T): { toString(): string };
 }
 
 export interface IKeyboardNavigationLabelProvider<T> {
@@ -70,7 +76,7 @@ export interface IKeyboardNavigationLabelProvider<T> {
 	 * the list for filtering/navigating. Return `undefined` to make
 	 * an element always match.
 	 */
-	getKeyboardNavigationLabel(element: T): { toString(): string | undefined; } | { toString(): string | undefined; }[] | undefined;
+	getKeyboardNavigationLabel(element: T): { toString(): string | undefined } | { toString(): string | undefined }[] | undefined;
 }
 
 export interface IKeyboardNavigationDelegate {

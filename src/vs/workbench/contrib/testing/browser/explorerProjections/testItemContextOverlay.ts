@@ -3,8 +3,8 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { InternalTestItem } from 'vs/workbench/contrib/testing/common/testCollection';
-import { capabilityContextKeys } from 'vs/workbench/contrib/testing/common/testConfigurationService';
+import { InternalTestItem } from 'vs/workbench/contrib/testing/common/testTypes';
+import { capabilityContextKeys } from 'vs/workbench/contrib/testing/common/testProfileService';
 import { TestId } from 'vs/workbench/contrib/testing/common/testId';
 import { TestingContextKeys } from 'vs/workbench/contrib/testing/common/testingContextKeys';
 

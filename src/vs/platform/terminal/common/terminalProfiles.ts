@@ -4,19 +4,25 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { Codicon } from 'vs/base/common/codicons';
-import { IExtensionTerminalProfile, ITerminalProfile } from 'vs/platform/terminal/common/terminal';
-import { ThemeIcon } from 'vs/platform/theme/common/themeService';
+import { URI, UriComponents } from 'vs/base/common/uri';
+import { localize } from 'vs/nls';
+import { IExtensionTerminalProfile, ITerminalProfile, TerminalIcon } from 'vs/platform/terminal/common/terminal';
+import { ThemeIcon } from 'vs/base/common/themables';
 
 export function createProfileSchemaEnums(detectedProfiles: ITerminalProfile[], extensionProfiles?: readonly IExtensionTerminalProfile[]): {
-	values: string[] | undefined,
-	markdownDescriptions: string[] | undefined
+	values: (string | null)[] | undefined;
+	markdownDescriptions: string[] | undefined;
 } {
-	const result = detectedProfiles.map(e => {
+	const result: { name: string | null; description: string }[] = [{
+		name: null,
+		description: localize('terminalAutomaticProfile', 'Automatically detect the default')
+	}];
+	result.push(...detectedProfiles.map(e => {
 		return {
 			name: e.profileName,
 			description: createProfileDescription(e)
 		};
-	});
+	}));
 	if (extensionProfiles) {
 		result.push(...extensionProfiles.map(extensionProfile => {
 			return {
@@ -53,6 +59,63 @@ function createProfileDescription(profile: ITerminalProfile): string {
 }
 
 function createExtensionProfileDescription(profile: IExtensionTerminalProfile): string {
-	let description = `$(${ThemeIcon.isThemeIcon(profile.icon) ? profile.icon.id : profile.icon ? profile.icon : Codicon.terminal.id}) ${profile.title}\n- extensionIdenfifier: ${profile.extensionIdentifier}`;
+	const description = `$(${ThemeIcon.isThemeIcon(profile.icon) ? profile.icon.id : profile.icon ? profile.icon : Codicon.terminal.id}) ${profile.title}\n- extensionIdentifier: ${profile.extensionIdentifier}`;
 	return description;
+}
+
+
+export function terminalProfileArgsMatch(args1: string | string[] | undefined, args2: string | string[] | undefined): boolean {
+	if (!args1 && !args2) {
+		return true;
+	} else if (typeof args1 === 'string' && typeof args2 === 'string') {
+		return args1 === args2;
+	} else if (Array.isArray(args1) && Array.isArray(args2)) {
+		if (args1.length !== args2.length) {
+			return false;
+		}
+		for (let i = 0; i < args1.length; i++) {
+			if (args1[i] !== args2[i]) {
+				return false;
+			}
+		}
+		return true;
+	}
+	return false;
+}
+
+export function terminalIconsEqual(a?: TerminalIcon, b?: TerminalIcon): boolean {
+	if (!a && !b) {
+		return true;
+	} else if (!a || !b) {
+		return false;
+	}
+
+	if (ThemeIcon.isThemeIcon(a) && ThemeIcon.isThemeIcon(b)) {
+		return a.id === b.id && a.color === b.color;
+	}
+	if (typeof a === 'object' && 'light' in a && 'dark' in a
+		&& typeof b === 'object' && 'light' in b && 'dark' in b) {
+		const castedA = (a as { light: unknown; dark: unknown });
+		const castedB = (b as { light: unknown; dark: unknown });
+		if ((URI.isUri(castedA.light) || isUriComponents(castedA.light)) && (URI.isUri(castedA.dark) || isUriComponents(castedA.dark))
+			&& (URI.isUri(castedB.light) || isUriComponents(castedB.light)) && (URI.isUri(castedB.dark) || isUriComponents(castedB.dark))) {
+			return castedA.light.path === castedB.light.path && castedA.dark.path === castedB.dark.path;
+		}
+	}
+	if ((URI.isUri(a) && URI.isUri(b)) || (isUriComponents(a) || isUriComponents(b))) {
+		const castedA = (a as { scheme: unknown; path: unknown });
+		const castedB = (b as { scheme: unknown; path: unknown });
+		return castedA.path === castedB.path && castedA.scheme === castedB.scheme;
+	}
+
+	return false;
+}
+
+
+export function isUriComponents(thing: unknown): thing is UriComponents {
+	if (!thing) {
+		return false;
+	}
+	return typeof (<any>thing).path === 'string' &&
+		typeof (<any>thing).scheme === 'string';
 }

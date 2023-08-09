@@ -10,11 +10,11 @@ import { once } from 'vs/base/common/functional';
 import { generateUuid } from 'vs/base/common/uuid';
 import { IContextKey, IContextKeyService } from 'vs/platform/contextkey/common/contextkey';
 import { createDecorator } from 'vs/platform/instantiation/common/instantiation';
-import { ExtensionRunTestsRequest, ITestRunProfile, ResolvedTestRunRequest, TestResultItem, TestResultState, TestRunProfileBitset } from 'vs/workbench/contrib/testing/common/testCollection';
-import { ITestProfileService } from 'vs/workbench/contrib/testing/common/testConfigurationService';
 import { TestingContextKeys } from 'vs/workbench/contrib/testing/common/testingContextKeys';
+import { ITestProfileService } from 'vs/workbench/contrib/testing/common/testProfileService';
 import { ITestResult, LiveTestResult, TestResultItemChange, TestResultItemChangeReason } from 'vs/workbench/contrib/testing/common/testResult';
 import { ITestResultStorage, RETAIN_MAX_RESULTS } from 'vs/workbench/contrib/testing/common/testResultStorage';
+import { ExtensionRunTestsRequest, ITestRunProfile, ResolvedTestRunRequest, TestResultItem, TestResultState } from 'vs/workbench/contrib/testing/common/testTypes';
 
 export type ResultChangeEvent =
 	| { completed: LiveTestResult }
@@ -65,7 +65,7 @@ export interface ITestResultService {
 	getStateById(extId: string): [results: ITestResult, item: TestResultItem] | undefined;
 }
 
-export const isRunningTests = (service: ITestResultService) =>
+const isRunningTests = (service: ITestResultService) =>
 	service.results.length > 0 && service.results[0].completedAt === undefined;
 
 export const ITestResultService = createDecorator<ITestResultService>('testResultService');
@@ -133,21 +133,20 @@ export class TestResultService implements ITestResultService {
 	public createLiveResult(req: ResolvedTestRunRequest | ExtensionRunTestsRequest) {
 		if ('targets' in req) {
 			const id = generateUuid();
-			return this.push(new LiveTestResult(id, this.storage.getOutputController(id), true, req));
+			return this.push(new LiveTestResult(id, true, req));
 		}
 
 		let profile: ITestRunProfile | undefined;
-		if (!req.profile) {
-			profile = this.testProfiles.getControllerGroupProfiles(req.controllerId, TestRunProfileBitset.Run)[0];
-		} else {
-			const profiles = this.testProfiles.getControllerGroupProfiles(req.controllerId, req.profile.group);
-			profile = profiles.find(c => c.profileId === req.profile!.id) || profiles[0];
+		if (req.profile) {
+			const profiles = this.testProfiles.getControllerProfiles(req.controllerId);
+			profile = profiles.find(c => c.profileId === req.profile!.id);
 		}
 
 		const resolved: ResolvedTestRunRequest = {
+			isUiTriggered: false,
 			targets: [],
-			exclude: req.exclude.map(testId => ({ testId, controllerId: req.controllerId })),
-			isAutoRun: false,
+			exclude: req.exclude,
+			continuous: req.continuous,
 		};
 
 		if (profile) {
@@ -159,7 +158,7 @@ export class TestResultService implements ITestResultService {
 			});
 		}
 
-		return this.push(new LiveTestResult(req.id, this.storage.getOutputController(req.id), req.persist, resolved));
+		return this.push(new LiveTestResult(req.id, req.persist, resolved));
 	}
 
 	/**

@@ -4,16 +4,15 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { sha1Hex } from 'vs/base/browser/hash';
-import { IFileService, IResolveFileResult, IFileStat } from 'vs/platform/files/common/files';
+import { IFileService, IFileStatResult, IFileStat } from 'vs/platform/files/common/files';
 import { IWorkspaceContextService, WorkbenchState, IWorkspace } from 'vs/platform/workspace/common/workspace';
 import { IWorkbenchEnvironmentService } from 'vs/workbench/services/environment/common/environmentService';
 import { ITextFileService, ITextFileContent } from 'vs/workbench/services/textfile/common/textfiles';
 import { URI } from 'vs/base/common/uri';
 import { Schemas } from 'vs/base/common/network';
-import { registerSingleton } from 'vs/platform/instantiation/common/extensions';
+import { InstantiationType, registerSingleton } from 'vs/platform/instantiation/common/extensions';
 import { IWorkspaceTagsService, Tags } from 'vs/workbench/contrib/tags/common/workspaceTags';
 import { getHashedRemotesFromConfig } from 'vs/workbench/contrib/tags/electron-sandbox/workspaceTags';
-import { IProductService } from 'vs/platform/product/common/productService';
 import { splitLines } from 'vs/base/common/strings';
 import { MavenArtifactIdRegex, MavenDependenciesRegex, MavenDependencyRegex, GradleDependencyCompactRegex, GradleDependencyLooseRegex, MavenGroupIdRegex, JavaLibrariesToLookFor } from 'vs/workbench/contrib/tags/common/javaWorkspaceTags';
 
@@ -38,6 +37,11 @@ const ModulesToLookFor = [
 	'hapi',
 	'socket.io',
 	'restify',
+	'next',
+	'nuxt',
+	'@nestjs/core',
+	'strapi',
+	'gatsby',
 	// JS frameworks
 	'react',
 	'react-native',
@@ -48,6 +52,7 @@ const ModulesToLookFor = [
 	'@ionic',
 	'vue',
 	'tns-core-modules',
+	'@nativescript/core',
 	'electron',
 	// Other interesting packages
 	'aws-sdk',
@@ -81,6 +86,14 @@ const ModulesToLookFor = [
 	'playwright-chromium',
 	'playwright-firefox',
 	'playwright-webkit',
+	// Other interesting browser testing packages
+	'cypress',
+	'nightwatch',
+	'protractor',
+	'puppeteer',
+	'selenium-webdriver',
+	'webdriverio',
+	'gherkin',
 	// AzureSDK packages
 	'@azure/app-configuration',
 	'@azure/cosmos-sign',
@@ -157,6 +170,10 @@ const PyMetaModulesToLookFor = [
 
 const PyModulesToLookFor = [
 	'azure',
+	'azure-ai-language-conversations',
+	'azure-ai-language-questionanswering',
+	'azure-ai-ml',
+	'azure-ai-translation-document',
 	'azure-appconfiguration',
 	'azure-loganalytics',
 	'azure-synapse-nspkg',
@@ -231,6 +248,28 @@ const PyModulesToLookFor = [
 	'playwright'
 ];
 
+const GoModulesToLookFor = [
+	'github.com/Azure/azure-sdk-for-go/sdk/storage/azblob',
+	'github.com/Azure/azure-sdk-for-go/sdk/storage/azfile',
+	'github.com/Azure/azure-sdk-for-go/sdk/storage/azqueue',
+	'github.com/Azure/azure-sdk-for-go/sdk/tracing/azotel',
+	'github.com/Azure/azure-sdk-for-go/sdk/security/keyvault/azadmin',
+	'github.com/Azure/azure-sdk-for-go/sdk/security/keyvault/azcertificates',
+	'github.com/Azure/azure-sdk-for-go/sdk/security/keyvault/azkeys',
+	'github.com/Azure/azure-sdk-for-go/sdk/security/keyvault/azsecrets',
+	'github.com/Azure/azure-sdk-for-go/sdk/monitor/azquery',
+	'github.com/Azure/azure-sdk-for-go/sdk/messaging/azeventhubs',
+	'github.com/Azure/azure-sdk-for-go/sdk/messaging/azservicebus',
+	'github.com/Azure/azure-sdk-for-go/sdk/data/azappconfig',
+	'github.com/Azure/azure-sdk-for-go/sdk/data/azcosmos',
+	'github.com/Azure/azure-sdk-for-go/sdk/data/aztables',
+	'github.com/Azure/azure-sdk-for-go/sdk/containers/azcontainerregistry',
+	'github.com/Azure/azure-sdk-for-go/sdk/cognitiveservices/azopenai',
+	'github.com/Azure/azure-sdk-for-go/sdk/azidentity',
+	'github.com/Azure/azure-sdk-for-go/sdk/azcore'
+];
+
+
 export class WorkspaceTagsService implements IWorkspaceTagsService {
 	declare readonly _serviceBrand: undefined;
 	private _tags: Tags | undefined;
@@ -239,7 +278,6 @@ export class WorkspaceTagsService implements IWorkspaceTagsService {
 		@IFileService private readonly fileService: IFileService,
 		@IWorkspaceContextService private readonly contextService: IWorkspaceContextService,
 		@IWorkbenchEnvironmentService private readonly environmentService: IWorkbenchEnvironmentService,
-		@IProductService private readonly productService: IProductService,
 		@ITextFileService private readonly textFileService: ITextFileService
 	) { }
 
@@ -291,6 +329,7 @@ export class WorkspaceTagsService implements IWorkspaceTagsService {
 		"WorkspaceTags" : {
 			"workbench.filesToOpenOrCreate" : { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
 			"workbench.filesToDiff" : { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
+			"workbench.filesToMerge" : { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
 			"workspace.id" : { "classification": "SystemMetaData", "purpose": "FeatureInsight" },
 			"workspace.roots" : { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
 			"workspace.empty" : { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
@@ -311,6 +350,11 @@ export class WorkspaceTagsService implements IWorkspaceTagsService {
 			"workspace.npm.hapi" : { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
 			"workspace.npm.socket.io" : { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
 			"workspace.npm.restify" : { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
+			"workspace.npm.next" : { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
+			"workspace.npm.nuxt" : { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
+			"workspace.npm.@nestjs/core" : { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
+			"workspace.npm.strapi" : { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
+			"workspace.npm.gatsby" : { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
 			"workspace.npm.rnpm-plugin-windows" : { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
 			"workspace.npm.react" : { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
 			"workspace.npm.@angular/core" : { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
@@ -354,6 +398,13 @@ export class WorkspaceTagsService implements IWorkspaceTagsService {
 			"workspace.npm.playwright-chromium" : { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
 			"workspace.npm.playwright-firefox" : { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
 			"workspace.npm.playwright-webkit" : { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
+			"workspace.npm.cypress" : { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
+			"workspace.npm.nightwatch" : { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
+			"workspace.npm.protractor" : { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
+			"workspace.npm.puppeteer" : { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
+			"workspace.npm.selenium-webdriver" : { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
+			"workspace.npm.webdriverio" : { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
+			"workspace.npm.gherkin" : { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
 			"workspace.npm.@azure/app-configuration" : { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
 			"workspace.npm.@azure/cosmos-sign" : { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
 			"workspace.npm.@azure/cosmos-language-service" : { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
@@ -450,10 +501,19 @@ export class WorkspaceTagsService implements IWorkspaceTagsService {
 			"workspace.py.requirements.star" : { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
 			"workspace.py.Pipfile" : { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
 			"workspace.py.conda" : { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
+			"workspace.py.setup": { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
+			"workspace.py.pyproject": { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
+			"workspace.py.manage": { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
+			"workspace.py.setupcfg": { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
+			"workspace.py.app": { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
 			"workspace.py.any-azure" : { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
 			"workspace.py.pulumi-azure" : { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
 			"workspace.py.azure" : { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
 			"workspace.py.azure-ai" : { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
+			"workspace.py.azure-ai-language-conversations" : { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
+			"workspace.py.azure-ai-language-questionanswering" : { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
+			"workspace.py.azure-ai-ml" : { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
+			"workspace.py.azure-ai-translation-document" : { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
 			"workspace.py.azure-cognitiveservices" : { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
 			"workspace.py.azure-core" : { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
 			"workspace.py.azure-cosmos" : { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
@@ -535,7 +595,25 @@ export class WorkspaceTagsService implements IWorkspaceTagsService {
 			"workspace.py.azure-communication-administration" : { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
 			"workspace.py.azure-security-attestation" : { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
 			"workspace.py.azure-data-nspkg" : { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
-			"workspace.py.azure-data-tables" : { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true }
+			"workspace.py.azure-data-tables" : { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
+			"workspace.go.mod.github.com/Azure/azure-sdk-for-go/sdk/storage/azblob" : { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
+			"workspace.go.mod.github.com/Azure/azure-sdk-for-go/sdk/storage/azfile" : { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
+			"workspace.go.mod.github.com/Azure/azure-sdk-for-go/sdk/storage/azqueue" : { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
+			"workspace.go.mod.github.com/Azure/azure-sdk-for-go/sdk/tracing/azotel" : { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
+			"workspace.go.mod.github.com/Azure/azure-sdk-for-go/sdk/security/keyvault/azadmin" : { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
+			"workspace.go.mod.github.com/Azure/azure-sdk-for-go/sdk/security/keyvault/azcertificates" : { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
+			"workspace.go.mod.github.com/Azure/azure-sdk-for-go/sdk/security/keyvault/azkeys" : { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
+			"workspace.go.mod.github.com/Azure/azure-sdk-for-go/sdk/security/keyvault/azsecrets" : { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
+			"workspace.go.mod.github.com/Azure/azure-sdk-for-go/sdk/monitor/azquery" : { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
+			"workspace.go.mod.github.com/Azure/azure-sdk-for-go/sdk/messaging/azeventhubs" : { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
+			"workspace.go.mod.github.com/Azure/azure-sdk-for-go/sdk/messaging/azservicebus" : { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
+			"workspace.go.mod.github.com/Azure/azure-sdk-for-go/sdk/data/azappconfig" : { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
+			"workspace.go.mod.github.com/Azure/azure-sdk-for-go/sdk/data/azcosmos" : { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
+			"workspace.go.mod.github.com/Azure/azure-sdk-for-go/sdk/data/aztables" : { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
+			"workspace.go.mod.github.com/Azure/azure-sdk-for-go/sdk/containers/azcontainerregistry" : { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
+			"workspace.go.mod.github.com/Azure/azure-sdk-for-go/sdk/cognitiveservices/azopenai" : { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
+			"workspace.go.mod.github.com/Azure/azure-sdk-for-go/sdk/azidentity" : { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
+			"workspace.go.mod.github.com/Azure/azure-sdk-for-go/sdk/azcore" : { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true }
 		}
 	*/
 	private async resolveWorkspaceTags(): Promise<Tags> {
@@ -546,20 +624,21 @@ export class WorkspaceTagsService implements IWorkspaceTagsService {
 
 		tags['workspace.id'] = await this.getTelemetryWorkspaceId(workspace, state);
 
-		const { filesToOpenOrCreate, filesToDiff } = this.environmentService.configuration;
+		const { filesToOpenOrCreate, filesToDiff, filesToMerge } = this.environmentService;
 		tags['workbench.filesToOpenOrCreate'] = filesToOpenOrCreate && filesToOpenOrCreate.length || 0;
 		tags['workbench.filesToDiff'] = filesToDiff && filesToDiff.length || 0;
+		tags['workbench.filesToMerge'] = filesToMerge && filesToMerge.length || 0;
 
 		const isEmpty = state === WorkbenchState.EMPTY;
 		tags['workspace.roots'] = isEmpty ? 0 : workspace.folders.length;
 		tags['workspace.empty'] = isEmpty;
 
-		const folders = !isEmpty ? workspace.folders.map(folder => folder.uri) : this.productService.quality !== 'stable' && this.findFolders();
+		const folders = !isEmpty ? workspace.folders.map(folder => folder.uri) : undefined;
 		if (!folders || !folders.length) {
 			return Promise.resolve(tags);
 		}
 
-		return this.fileService.resolveAll(folders.map(resource => ({ resource }))).then((files: IResolveFileResult[]) => {
+		return this.fileService.resolveAll(folders.map(resource => ({ resource }))).then((files: IFileStatResult[]) => {
 			const names = (<IFileStat[]>[]).concat(...files.map(result => result.success ? (result.stat!.children || []) : [])).map(c => c.name);
 			const nameSet = names.reduce((s, n) => s.add(n.toLowerCase()), new Set());
 
@@ -579,7 +658,7 @@ export class WorkspaceTagsService implements IWorkspaceTagsService {
 			tags['workspace.bower'] = nameSet.has('bower.json') || nameSet.has('bower_components');
 
 			tags['workspace.java.pom'] = nameSet.has('pom.xml');
-			tags['workspace.java.gradle'] = nameSet.has('build.gradle') || nameSet.has('settings.gradle');
+			tags['workspace.java.gradle'] = nameSet.has('build.gradle') || nameSet.has('settings.gradle') || nameSet.has('build.gradle.kts') || nameSet.has('settings.gradle.kts') || nameSet.has('gradlew') || nameSet.has('gradlew.bat');
 
 			tags['workspace.yeoman.code.ext'] = nameSet.has('vsc-extension-quickstart.md');
 
@@ -587,6 +666,13 @@ export class WorkspaceTagsService implements IWorkspaceTagsService {
 			tags['workspace.py.requirements.star'] = this.searchArray(names, /^(.*)requirements(.*)\.txt$/i);
 			tags['workspace.py.Pipfile'] = nameSet.has('pipfile');
 			tags['workspace.py.conda'] = this.searchArray(names, /^environment(\.yml$|\.yaml$)/i);
+			tags['workspace.py.setup'] = nameSet.has('setup.py');
+			tags['workspace.py.manage'] = nameSet.has('manage.py');
+			tags['workspace.py.setupcfg'] = nameSet.has('setup.cfg');
+			tags['workspace.py.app'] = nameSet.has('app.py');
+			tags['workspace.py.pyproject'] = nameSet.has('pyproject.toml');
+
+			tags['workspace.go.mod'] = nameSet.has('go.mod');
 
 			const mainActivity = nameSet.has('mainactivity.cs') || nameSet.has('mainactivity.fs');
 			const appDelegate = nameSet.has('appdelegate.cs') || nameSet.has('appdelegate.fs');
@@ -661,7 +747,7 @@ export class WorkspaceTagsService implements IWorkspaceTagsService {
 
 			const requirementsTxtPromises = getFilePromises('requirements.txt', this.fileService, this.textFileService, content => {
 				const dependencies: string[] = splitLines(content.value);
-				for (let dependency of dependencies) {
+				for (const dependency of dependencies) {
 					// Dependencies in requirements.txt can have 3 formats: `foo==3.1, foo>=3.1, foo`
 					const format1 = dependency.split('==');
 					const format2 = dependency.split('>=');
@@ -676,7 +762,7 @@ export class WorkspaceTagsService implements IWorkspaceTagsService {
 				// We're only interested in the '[packages]' section of the Pipfile
 				dependencies = dependencies.slice(dependencies.indexOf('[packages]') + 1);
 
-				for (let dependency of dependencies) {
+				for (const dependency of dependencies) {
 					if (dependency.trim().indexOf('[') > -1) {
 						break;
 					}
@@ -693,12 +779,12 @@ export class WorkspaceTagsService implements IWorkspaceTagsService {
 			const packageJsonPromises = getFilePromises('package.json', this.fileService, this.textFileService, content => {
 				try {
 					const packageJsonContents = JSON.parse(content.value);
-					let dependencies = Object.keys(packageJsonContents['dependencies'] || {}).concat(Object.keys(packageJsonContents['devDependencies'] || {}));
+					const dependencies = Object.keys(packageJsonContents['dependencies'] || {}).concat(Object.keys(packageJsonContents['devDependencies'] || {}));
 
-					for (let dependency of dependencies) {
-						if ('react-native' === dependency) {
+					for (const dependency of dependencies) {
+						if (dependency.startsWith('react-native')) {
 							tags['workspace.reactNative'] = true;
-						} else if ('tns-core-modules' === dependency) {
+						} else if ('tns-core-modules' === dependency || '@nativescript/core' === dependency) {
 							tags['workspace.nativescript'] = true;
 						} else if (ModulesToLookFor.indexOf(dependency) > -1) {
 							tags['workspace.npm.' + dependency] = true;
@@ -707,6 +793,36 @@ export class WorkspaceTagsService implements IWorkspaceTagsService {
 								if (dependency.startsWith(metaModule)) {
 									tags['workspace.npm.' + metaModule] = true;
 								}
+							}
+						}
+					}
+				}
+				catch (e) {
+					// Ignore errors when resolving file or parsing file contents
+				}
+			});
+
+			const goModPromises = getFilePromises('go.mod', this.fileService, this.textFileService, content => {
+				try {
+					const lines: string[] = splitLines(content.value);
+					let firstRequireBlockFound: boolean = false;
+					for (let i = 0; i < lines.length; i++) {
+						const line: string = lines[i].trim();
+						if (line.startsWith('require (')) {
+							if (!firstRequireBlockFound) {
+								firstRequireBlockFound = true;
+								continue;
+							} else {
+								break;
+							}
+						}
+						if (line.startsWith(')')) {
+							break;
+						}
+						if (firstRequireBlockFound && line !== '') {
+							const packageName: string = line.split(' ')[0].trim();
+							if (GoModulesToLookFor.indexOf(packageName) > -1) {
+								tags['workspace.go.mod.' + packageName] = true;
 							}
 						}
 					}
@@ -755,7 +871,8 @@ export class WorkspaceTagsService implements IWorkspaceTagsService {
 					// Ignore errors when resolving android
 				});
 			});
-			return Promise.all([...packageJsonPromises, ...requirementsTxtPromises, ...pipfilePromises, ...pomPromises, ...gradlePromises, ...androidPromises]).then(() => tags);
+
+			return Promise.all([...packageJsonPromises, ...requirementsTxtPromises, ...pipfilePromises, ...pomPromises, ...gradlePromises, ...androidPromises, ...goModPromises]).then(() => tags);
 		});
 	}
 
@@ -780,33 +897,9 @@ export class WorkspaceTagsService implements IWorkspaceTagsService {
 		}
 	}
 
-	private findFolders(): URI[] | undefined {
-		const folder = this.findFolder();
-		return folder && [folder];
-	}
-
-	private findFolder(): URI | undefined {
-		const { filesToOpenOrCreate, filesToDiff } = this.environmentService.configuration;
-		if (filesToOpenOrCreate && filesToOpenOrCreate.length) {
-			return this.parentURI(filesToOpenOrCreate[0].fileUri);
-		} else if (filesToDiff && filesToDiff.length) {
-			return this.parentURI(filesToDiff[0].fileUri);
-		}
-		return undefined;
-	}
-
-	private parentURI(uri: URI | undefined): URI | undefined {
-		if (!uri) {
-			return undefined;
-		}
-		const path = uri.path;
-		const i = path.lastIndexOf('/');
-		return i !== -1 ? uri.with({ path: path.substr(0, i) }) : undefined;
-	}
-
 	private searchArray(arr: string[], regEx: RegExp): boolean | undefined {
 		return arr.some(v => v.search(regEx) > -1) || undefined;
 	}
 }
 
-registerSingleton(IWorkspaceTagsService, WorkspaceTagsService, true);
+registerSingleton(IWorkspaceTagsService, WorkspaceTagsService, InstantiationType.Delayed);

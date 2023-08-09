@@ -3,34 +3,33 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import 'vs/css!./media/diffReview';
-import * as nls from 'vs/nls';
 import * as dom from 'vs/base/browser/dom';
 import { FastDomNode, createFastDomNode } from 'vs/base/browser/fastDomNode';
+import { createTrustedTypesPolicy } from 'vs/base/browser/trustedTypes';
 import { ActionBar } from 'vs/base/browser/ui/actionbar/actionbar';
 import { DomScrollableElement } from 'vs/base/browser/ui/scrollbar/scrollableElement';
 import { Action } from 'vs/base/common/actions';
+import { Codicon } from 'vs/base/common/codicons';
 import { KeyCode, KeyMod } from 'vs/base/common/keyCodes';
 import { Disposable } from 'vs/base/common/lifecycle';
-import { Configuration } from 'vs/editor/browser/config/configuration';
-import { ICodeEditor } from 'vs/editor/browser/editorBrowser';
-import { EditorAction, ServicesAccessor, registerEditorAction } from 'vs/editor/browser/editorExtensions';
-import { ICodeEditorService } from 'vs/editor/browser/services/codeEditorService';
-import { DiffEditorWidget } from 'vs/editor/browser/widget/diffEditorWidget';
-import { IComputedEditorOptions, EditorOption, EditorFontLigatures } from 'vs/editor/common/config/editorOptions';
-import { LineTokens } from 'vs/editor/common/core/lineTokens';
-import { Position } from 'vs/editor/common/core/position';
-import { ILineChange, ScrollType } from 'vs/editor/common/editorCommon';
-import { ITextModel, TextModelResolvedOptions } from 'vs/editor/common/model';
-import { editorLineNumbers } from 'vs/editor/common/view/editorColorRegistry';
-import { RenderLineInput, renderViewLine2 as renderViewLine } from 'vs/editor/common/viewLayout/viewLineRenderer';
-import { ViewLineRenderingData } from 'vs/editor/common/viewModel/viewModel';
-import { ContextKeyExpr } from 'vs/platform/contextkey/common/contextkey';
-import { KeybindingWeight } from 'vs/platform/keybinding/common/keybindingsRegistry';
-import { scrollbarShadow } from 'vs/platform/theme/common/colorRegistry';
-import { registerThemingParticipant, ThemeIcon } from 'vs/platform/theme/common/themeService';
+import { ThemeIcon } from 'vs/base/common/themables';
 import { Constants } from 'vs/base/common/uint';
-import { Codicon } from 'vs/base/common/codicons';
+import 'vs/css!./media/diffReview';
+import { applyFontInfo } from 'vs/editor/browser/config/domFontInfo';
+import { DiffEditorWidget } from 'vs/editor/browser/widget/diffEditorWidget';
+import { EditorFontLigatures, EditorOption, IComputedEditorOptions } from 'vs/editor/common/config/editorOptions';
+import { Position } from 'vs/editor/common/core/position';
+import { ILineChange } from 'vs/editor/common/diff/smartLinesDiffComputer';
+import { ScrollType } from 'vs/editor/common/editorCommon';
+import { ILanguageIdCodec } from 'vs/editor/common/languages';
+import { ILanguageService } from 'vs/editor/common/languages/language';
+import { ITextModel, TextModelResolvedOptions } from 'vs/editor/common/model';
+import { LineTokens } from 'vs/editor/common/tokens/lineTokens';
+import { RenderLineInput, renderViewLine2 as renderViewLine } from 'vs/editor/common/viewLayout/viewLineRenderer';
+import { ViewLineRenderingData } from 'vs/editor/common/viewModel';
+import * as nls from 'vs/nls';
+import { AudioCue, IAudioCueService } from 'vs/platform/audioCues/browser/audioCueService';
+import { IConfigurationService } from 'vs/platform/configuration/common/configuration';
 import { registerIcon } from 'vs/platform/theme/common/iconRegistry';
 
 const DIFF_LINES_PADDING = 3;
@@ -65,6 +64,11 @@ class DiffEntry {
 	}
 }
 
+const enum DiffEditorLineClasses {
+	Insert = 'line-insert',
+	Delete = 'line-delete'
+}
+
 class Diff {
 	readonly entries: DiffEntry[];
 
@@ -79,7 +83,7 @@ const diffReviewCloseIcon = registerIcon('diff-review-close', Codicon.close, nls
 
 export class DiffReview extends Disposable {
 
-	private static _ttPolicy = window.trustedTypes?.createPolicy('diffReview', { createHTML: value => value });
+	public static _ttPolicy = createTrustedTypesPolicy('diffReview', { createHTML: value => value });
 
 	private readonly _diffEditor: DiffEditorWidget;
 	private _isVisible: boolean;
@@ -92,7 +96,12 @@ export class DiffReview extends Disposable {
 	private _diffs: Diff[];
 	private _currentDiff: Diff | null;
 
-	constructor(diffEditor: DiffEditorWidget) {
+	constructor(
+		diffEditor: DiffEditorWidget,
+		@ILanguageService private readonly _languageService: ILanguageService,
+		@IAudioCueService private readonly _audioCueService: IAudioCueService,
+		@IConfigurationService private readonly _configurationService: IConfigurationService
+	) {
 		super();
 		this._diffEditor = diffEditor;
 		this._isVisible = false;
@@ -133,7 +142,7 @@ export class DiffReview extends Disposable {
 		this._register(dom.addStandardDisposableListener(this.domNode.domNode, 'click', (e) => {
 			e.preventDefault();
 
-			let row = dom.findParentWithClass(e.target, 'diff-review-row');
+			const row = dom.findParentWithClass(e.target, 'diff-review-row');
 			if (row) {
 				this._goToRow(row);
 			}
@@ -145,7 +154,7 @@ export class DiffReview extends Disposable {
 				|| e.equals(KeyMod.Alt | KeyCode.DownArrow)
 			) {
 				e.preventDefault();
-				this._goToRow(this._getNextRow());
+				this._goToRow(this._getNextRow(), 'next');
 			}
 
 			if (
@@ -154,7 +163,7 @@ export class DiffReview extends Disposable {
 				|| e.equals(KeyMod.Alt | KeyCode.UpArrow)
 			) {
 				e.preventDefault();
-				this._goToRow(this._getPrevRow());
+				this._goToRow(this._getPrevRow(), 'previous');
 			}
 
 			if (
@@ -162,17 +171,16 @@ export class DiffReview extends Disposable {
 				|| e.equals(KeyMod.CtrlCmd | KeyCode.Escape)
 				|| e.equals(KeyMod.Alt | KeyCode.Escape)
 				|| e.equals(KeyMod.Shift | KeyCode.Escape)
-			) {
-				e.preventDefault();
-				this.hide();
-			}
-
-			if (
-				e.equals(KeyCode.Space)
+				|| e.equals(KeyCode.Space)
 				|| e.equals(KeyCode.Enter)
 			) {
 				e.preventDefault();
 				this.accept();
+			}
+		}));
+		this._register(this._configurationService.onDidChangeConfiguration(e => {
+			if (e.affectsConfiguration('accessibility.verbosity.diffEditor')) {
+				this._diffEditor.updateOptions({ accessibilityVerbose: this._configurationService.getValue('accessibility.verbosity.diffEditor') });
 			}
 		}));
 		this._diffs = [];
@@ -211,7 +219,7 @@ export class DiffReview extends Disposable {
 		this._isVisible = true;
 		this._diffEditor.doLayout();
 		this._render();
-		this._goToRow(this._getNextRow());
+		this._goToRow(this._getPrevRow(), 'previous');
 	}
 
 	public next(): void {
@@ -246,14 +254,14 @@ export class DiffReview extends Disposable {
 		this._isVisible = true;
 		this._diffEditor.doLayout();
 		this._render();
-		this._goToRow(this._getNextRow());
+		this._goToRow(this._getNextRow(), 'next');
 	}
 
 	private accept(): void {
 		let jumpToLineNumber = -1;
-		let current = this._getCurrentFocusedRow();
+		const current = this._getCurrentFocusedRow();
 		if (current) {
-			let lineNumber = parseInt(current.getAttribute('data-line')!, 10);
+			const lineNumber = parseInt(current.getAttribute('data-line')!, 10);
 			if (!isNaN(lineNumber)) {
 				jumpToLineNumber = lineNumber;
 			}
@@ -275,7 +283,7 @@ export class DiffReview extends Disposable {
 	}
 
 	private _getPrevRow(): HTMLElement {
-		let current = this._getCurrentFocusedRow();
+		const current = this._getCurrentFocusedRow();
 		if (!current) {
 			return this._getFirstRow();
 		}
@@ -286,7 +294,7 @@ export class DiffReview extends Disposable {
 	}
 
 	private _getNextRow(): HTMLElement {
-		let current = this._getCurrentFocusedRow();
+		const current = this._getCurrentFocusedRow();
 		if (!current) {
 			return this._getFirstRow();
 		}
@@ -301,19 +309,25 @@ export class DiffReview extends Disposable {
 	}
 
 	private _getCurrentFocusedRow(): HTMLElement | null {
-		let result = <HTMLElement>document.activeElement;
+		const result = <HTMLElement>document.activeElement;
 		if (result && /diff-review-row/.test(result.className)) {
 			return result;
 		}
 		return null;
 	}
 
-	private _goToRow(row: HTMLElement): void {
-		let prev = this._getCurrentFocusedRow();
+	private _goToRow(row: HTMLElement, type?: 'next' | 'previous'): void {
+		const current = this._getCurrentFocusedRow();
 		row.tabIndex = 0;
 		row.focus();
-		if (prev && prev !== row) {
-			prev.tabIndex = -1;
+		if (current && current !== row) {
+			current.tabIndex = -1;
+		}
+		const element = !type ? current : type === 'next' ? current?.nextElementSibling : current?.previousElementSibling;
+		if (element?.classList.contains(DiffEditorLineClasses.Insert)) {
+			this._audioCueService.playAudioCue(AudioCue.diffLineInserted, { allowManyInParallel: true });
+		} else if (element?.classList.contains(DiffEditorLineClasses.Delete)) {
+			this._audioCueService.playAudioCue(AudioCue.diffLineDeleted, { allowManyInParallel: true });
 		}
 		this.scrollbar.scanDomNode();
 	}
@@ -364,7 +378,8 @@ export class DiffReview extends Disposable {
 			return [];
 		}
 
-		let diffs: Diff[] = [], diffsLength = 0;
+		const diffs: Diff[] = [];
+		let diffsLength = 0;
 
 		for (let i = 0, len = lineChanges.length; i < len; i++) {
 			const lineChange = lineChanges[i];
@@ -374,7 +389,8 @@ export class DiffReview extends Disposable {
 			const modifiedStart = lineChange.modifiedStartLineNumber;
 			const modifiedEnd = lineChange.modifiedEndLineNumber;
 
-			let r: DiffEntry[] = [], rLength = 0;
+			const r: DiffEntry[] = [];
+			let rLength = 0;
 
 			// Emit before anchors
 			{
@@ -482,7 +498,8 @@ export class DiffReview extends Disposable {
 
 		// Merge adjacent diffs
 		let curr: DiffEntry[] = diffs[0].entries;
-		let r: Diff[] = [], rLength = 0;
+		const r: Diff[] = [];
+		let rLength = 0;
 		for (let i = 1, len = diffs.length; i < len; i++) {
 			const thisDiff = diffs[i].entries;
 
@@ -550,11 +567,11 @@ export class DiffReview extends Disposable {
 		this._currentDiff = this._diffs[diffIndex];
 
 		const diffs = this._diffs[diffIndex].entries;
-		let container = document.createElement('div');
+		const container = document.createElement('div');
 		container.className = 'diff-review-table';
 		container.setAttribute('role', 'list');
 		container.setAttribute('aria-label', 'Difference review. Use "Stage | Unstage | Revert Selected Ranges" commands');
-		Configuration.applyFontInfoSlow(container, modifiedOptions.get(EditorOption.fontInfo));
+		applyFontInfo(container, modifiedOptions.get(EditorOption.fontInfo));
 
 		let minOriginalLine = 0;
 		let maxOriginalLine = 0;
@@ -581,10 +598,10 @@ export class DiffReview extends Disposable {
 			}
 		}
 
-		let header = document.createElement('div');
+		const header = document.createElement('div');
 		header.className = 'diff-review-row';
 
-		let cell = document.createElement('div');
+		const cell = document.createElement('div');
 		cell.className = 'diff-review-cell diff-review-summary';
 		const originalChangedLinesCnt = maxOriginalLine - minOriginalLine + 1;
 		const modifiedChangedLinesCnt = maxModifiedLine - minModifiedLine + 1;
@@ -624,7 +641,7 @@ export class DiffReview extends Disposable {
 		let modLine = minModifiedLine;
 		for (let i = 0, len = diffs.length; i < len; i++) {
 			const diffEntry = diffs[i];
-			DiffReview._renderSection(container, diffEntry, modLine, lineHeight, this._width, originalOptions, originalModel, originalModelOpts, modifiedOptions, modifiedModel, modifiedModelOpts);
+			DiffReview._renderSection(container, diffEntry, modLine, lineHeight, this._width, originalOptions, originalModel, originalModelOpts, modifiedOptions, modifiedModel, modifiedModelOpts, this._languageService.languageIdCodec);
 			if (diffEntry.modifiedLineStart !== 0) {
 				modLine = diffEntry.modifiedLineEnd;
 			}
@@ -638,7 +655,8 @@ export class DiffReview extends Disposable {
 	private static _renderSection(
 		dest: HTMLElement, diffEntry: DiffEntry, modLine: number, lineHeight: number, width: number,
 		originalOptions: IComputedEditorOptions, originalModel: ITextModel, originalModelOpts: TextModelResolvedOptions,
-		modifiedOptions: IComputedEditorOptions, modifiedModel: ITextModel, modifiedModelOpts: TextModelResolvedOptions
+		modifiedOptions: IComputedEditorOptions, modifiedModel: ITextModel, modifiedModelOpts: TextModelResolvedOptions,
+		languageIdCodec: ILanguageIdCodec
 	): void {
 
 		const type = diffEntry.getType();
@@ -689,7 +707,7 @@ export class DiffReview extends Disposable {
 			}
 			row.setAttribute('data-line', String(modLine));
 
-			let cell = document.createElement('div');
+			const cell = document.createElement('div');
 			cell.className = 'diff-review-cell';
 			cell.style.height = `${lineHeight}px`;
 			row.appendChild(cell);
@@ -732,14 +750,14 @@ export class DiffReview extends Disposable {
 
 			let lineContent: string;
 			if (modifiedLine !== 0) {
-				let html: string | TrustedHTML = this._renderLine(modifiedModel, modifiedOptions, modifiedModelOpts.tabSize, modifiedLine);
+				let html: string | TrustedHTML = this._renderLine(modifiedModel, modifiedOptions, modifiedModelOpts.tabSize, modifiedLine, languageIdCodec);
 				if (DiffReview._ttPolicy) {
 					html = DiffReview._ttPolicy.createHTML(html as string);
 				}
 				cell.insertAdjacentHTML('beforeend', html as string);
 				lineContent = modifiedModel.getLineContent(modifiedLine);
 			} else {
-				let html: string | TrustedHTML = this._renderLine(originalModel, originalOptions, originalModelOpts.tabSize, originalLine);
+				let html: string | TrustedHTML = this._renderLine(originalModel, originalOptions, originalModelOpts.tabSize, originalLine, languageIdCodec);
 				if (DiffReview._ttPolicy) {
 					html = DiffReview._ttPolicy.createHTML(html as string);
 				}
@@ -773,10 +791,10 @@ export class DiffReview extends Disposable {
 		}
 	}
 
-	private static _renderLine(model: ITextModel, options: IComputedEditorOptions, tabSize: number, lineNumber: number): string {
+	private static _renderLine(model: ITextModel, options: IComputedEditorOptions, tabSize: number, lineNumber: number, languageIdCodec: ILanguageIdCodec): string {
 		const lineContent = model.getLineContent(lineNumber);
 		const fontInfo = options.get(EditorOption.fontInfo);
-		const lineTokens = LineTokens.createEmpty(lineContent);
+		const lineTokens = LineTokens.createEmpty(lineContent, languageIdCodec);
 		const isBasicASCII = ViewLineRenderingData.isBasicASCII(lineContent, model.mightContainNonBasicASCII());
 		const containsRTL = ViewLineRenderingData.containsRTL(lineContent, isBasicASCII, model.mightContainRTL());
 		const r = renderViewLine(new RenderLineInput(
@@ -806,81 +824,3 @@ export class DiffReview extends Disposable {
 }
 
 // theming
-
-registerThemingParticipant((theme, collector) => {
-	const lineNumbers = theme.getColor(editorLineNumbers);
-	if (lineNumbers) {
-		collector.addRule(`.monaco-diff-editor .diff-review-line-number { color: ${lineNumbers}; }`);
-	}
-
-	const shadow = theme.getColor(scrollbarShadow);
-	if (shadow) {
-		collector.addRule(`.monaco-diff-editor .diff-review-shadow { box-shadow: ${shadow} 0 -6px 6px -6px inset; }`);
-	}
-});
-
-class DiffReviewNext extends EditorAction {
-	constructor() {
-		super({
-			id: 'editor.action.diffReview.next',
-			label: nls.localize('editor.action.diffReview.next', "Go to Next Difference"),
-			alias: 'Go to Next Difference',
-			precondition: ContextKeyExpr.has('isInDiffEditor'),
-			kbOpts: {
-				kbExpr: null,
-				primary: KeyCode.F7,
-				weight: KeybindingWeight.EditorContrib
-			}
-		});
-	}
-
-	public run(accessor: ServicesAccessor, editor: ICodeEditor): void {
-		const diffEditor = findFocusedDiffEditor(accessor);
-		if (diffEditor) {
-			diffEditor.diffReviewNext();
-		}
-	}
-}
-
-class DiffReviewPrev extends EditorAction {
-	constructor() {
-		super({
-			id: 'editor.action.diffReview.prev',
-			label: nls.localize('editor.action.diffReview.prev', "Go to Previous Difference"),
-			alias: 'Go to Previous Difference',
-			precondition: ContextKeyExpr.has('isInDiffEditor'),
-			kbOpts: {
-				kbExpr: null,
-				primary: KeyMod.Shift | KeyCode.F7,
-				weight: KeybindingWeight.EditorContrib
-			}
-		});
-	}
-
-	public run(accessor: ServicesAccessor, editor: ICodeEditor): void {
-		const diffEditor = findFocusedDiffEditor(accessor);
-		if (diffEditor) {
-			diffEditor.diffReviewPrev();
-		}
-	}
-}
-
-function findFocusedDiffEditor(accessor: ServicesAccessor): DiffEditorWidget | null {
-	const codeEditorService = accessor.get(ICodeEditorService);
-	const diffEditors = codeEditorService.listDiffEditors();
-	const activeCodeEditor = codeEditorService.getActiveCodeEditor();
-	if (!activeCodeEditor) {
-		return null;
-	}
-
-	for (let i = 0, len = diffEditors.length; i < len; i++) {
-		const diffEditor = <DiffEditorWidget>diffEditors[i];
-		if (diffEditor.getModifiedEditor().getId() === activeCodeEditor.getId() || diffEditor.getOriginalEditor().getId() === activeCodeEditor.getId()) {
-			return diffEditor;
-		}
-	}
-	return null;
-}
-
-registerEditorAction(DiffReviewNext);
-registerEditorAction(DiffReviewPrev);

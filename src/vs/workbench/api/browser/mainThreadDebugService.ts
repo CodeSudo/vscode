@@ -3,26 +3,25 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { DisposableStore } from 'vs/base/common/lifecycle';
+import { DisposableStore, toDisposable } from 'vs/base/common/lifecycle';
 import { URI as uri, UriComponents } from 'vs/base/common/uri';
-import { IDebugService, IConfig, IDebugConfigurationProvider, IBreakpoint, IFunctionBreakpoint, IBreakpointData, IDebugAdapter, IDebugAdapterDescriptorFactory, IDebugSession, IDebugAdapterFactory, IDataBreakpoint, IDebugSessionOptions, IInstructionBreakpoint } from 'vs/workbench/contrib/debug/common/debug';
+import { IDebugService, IConfig, IDebugConfigurationProvider, IBreakpoint, IFunctionBreakpoint, IBreakpointData, IDebugAdapter, IDebugAdapterDescriptorFactory, IDebugSession, IDebugAdapterFactory, IDataBreakpoint, IDebugSessionOptions, IInstructionBreakpoint, DebugConfigurationProviderTriggerKind } from 'vs/workbench/contrib/debug/common/debug';
 import {
 	ExtHostContext, ExtHostDebugServiceShape, MainThreadDebugServiceShape, DebugSessionUUID, MainContext,
-	IExtHostContext, IBreakpointsDeltaDto, ISourceMultiBreakpointDto, ISourceBreakpointDto, IFunctionBreakpointDto, IDebugSessionDto, IDataBreakpointDto, IStartDebuggingOptions, IDebugConfiguration
+	IBreakpointsDeltaDto, ISourceMultiBreakpointDto, ISourceBreakpointDto, IFunctionBreakpointDto, IDebugSessionDto, IDataBreakpointDto, IStartDebuggingOptions, IDebugConfiguration, IThreadFocusDto, IStackFrameFocusDto
 } from 'vs/workbench/api/common/extHost.protocol';
-import { extHostNamedCustomer } from 'vs/workbench/api/common/extHostCustomers';
+import { extHostNamedCustomer, IExtHostContext } from 'vs/workbench/services/extensions/common/extHostCustomers';
 import severity from 'vs/base/common/severity';
 import { AbstractDebugAdapter } from 'vs/workbench/contrib/debug/common/abstractDebugAdapter';
 import { IWorkspaceFolder } from 'vs/platform/workspace/common/workspace';
-import { convertToVSCPaths, convertToDAPaths } from 'vs/workbench/contrib/debug/common/debugUtils';
-import { DebugConfigurationProviderTriggerKind } from 'vs/workbench/api/common/extHostTypes';
+import { convertToVSCPaths, convertToDAPaths, isSessionAttach } from 'vs/workbench/contrib/debug/common/debugUtils';
+import { ErrorNoTelemetry } from 'vs/base/common/errors';
 
 @extHostNamedCustomer(MainContext.MainThreadDebugService)
 export class MainThreadDebugService implements MainThreadDebugServiceShape, IDebugAdapterFactory {
 
 	private readonly _proxy: ExtHostDebugServiceShape;
 	private readonly _toDispose = new DisposableStore();
-	private _breakpointEventsActive: boolean | undefined;
 	private readonly _debugAdapters: Map<number, ExtensionHostDebugAdapter>;
 	private _debugAdaptersHandleCounter = 1;
 	private readonly _debugConfigurationProviders: Map<number, IDebugConfigurationProvider>;
@@ -51,11 +50,73 @@ export class MainThreadDebugService implements MainThreadDebugServiceShape, IDeb
 		this._toDispose.add(debugService.getViewModel().onDidFocusSession(session => {
 			this._proxy.$acceptDebugSessionActiveChanged(this.getSessionDto(session));
 		}));
+		this._toDispose.add(toDisposable(() => {
+			for (const [handle, da] of this._debugAdapters) {
+				da.fireError(handle, new Error('Extension host shut down'));
+			}
+		}));
 
 		this._debugAdapters = new Map();
 		this._debugConfigurationProviders = new Map();
 		this._debugAdapterDescriptorFactories = new Map();
 		this._sessions = new Set();
+
+		this._toDispose.add(this.debugService.getViewModel().onDidFocusThread(({ thread, explicit, session }) => {
+			if (session) {
+				const dto: IThreadFocusDto = {
+					kind: 'thread',
+					threadId: thread?.threadId,
+					sessionId: session!.getId(),
+				};
+				this._proxy.$acceptStackFrameFocus(dto);
+			}
+		}));
+
+		this._toDispose.add(this.debugService.getViewModel().onDidFocusStackFrame(({ stackFrame, explicit, session }) => {
+			if (session) {
+				const dto: IStackFrameFocusDto = {
+					kind: 'stackFrame',
+					threadId: stackFrame?.thread.threadId,
+					frameId: stackFrame?.frameId,
+					sessionId: session.getId(),
+				};
+				this._proxy.$acceptStackFrameFocus(dto);
+			}
+		}));
+		this.sendBreakpointsAndListen();
+	}
+
+	private sendBreakpointsAndListen(): void {
+		// set up a handler to send more
+		this._toDispose.add(this.debugService.getModel().onDidChangeBreakpoints(e => {
+			// Ignore session only breakpoint events since they should only reflect in the UI
+			if (e && !e.sessionOnly) {
+				const delta: IBreakpointsDeltaDto = {};
+				if (e.added) {
+					delta.added = this.convertToDto(e.added);
+				}
+				if (e.removed) {
+					delta.removed = e.removed.map(x => x.getId());
+				}
+				if (e.changed) {
+					delta.changed = this.convertToDto(e.changed);
+				}
+
+				if (delta.added || delta.removed || delta.changed) {
+					this._proxy.$acceptBreakpointsDelta(delta);
+				}
+			}
+		}));
+
+		// send all breakpoints
+		const bps = this.debugService.getModel().getBreakpoints();
+		const fbps = this.debugService.getModel().getFunctionBreakpoints();
+		const dbps = this.debugService.getModel().getDataBreakpoints();
+		if (bps.length > 0 || fbps.length > 0) {
+			this._proxy.$acceptBreakpointsDelta({
+				added: this.convertToDto(bps).concat(this.convertToDto(fbps)).concat(this.convertToDto(dbps))
+			});
+		}
 	}
 
 	public dispose(): void {
@@ -85,47 +146,9 @@ export class MainThreadDebugService implements MainThreadDebugServiceShape, IDeb
 		this._toDispose.add(this.debugService.getAdapterManager().registerDebugAdapterFactory(debugTypes, this));
 	}
 
-	public $startBreakpointEvents(): void {
-
-		if (!this._breakpointEventsActive) {
-			this._breakpointEventsActive = true;
-
-			// set up a handler to send more
-			this._toDispose.add(this.debugService.getModel().onDidChangeBreakpoints(e => {
-				// Ignore session only breakpoint events since they should only reflect in the UI
-				if (e && !e.sessionOnly) {
-					const delta: IBreakpointsDeltaDto = {};
-					if (e.added) {
-						delta.added = this.convertToDto(e.added);
-					}
-					if (e.removed) {
-						delta.removed = e.removed.map(x => x.getId());
-					}
-					if (e.changed) {
-						delta.changed = this.convertToDto(e.changed);
-					}
-
-					if (delta.added || delta.removed || delta.changed) {
-						this._proxy.$acceptBreakpointsDelta(delta);
-					}
-				}
-			}));
-
-			// send all breakpoints
-			const bps = this.debugService.getModel().getBreakpoints();
-			const fbps = this.debugService.getModel().getFunctionBreakpoints();
-			const dbps = this.debugService.getModel().getDataBreakpoints();
-			if (bps.length > 0 || fbps.length > 0) {
-				this._proxy.$acceptBreakpointsDelta({
-					added: this.convertToDto(bps).concat(this.convertToDto(fbps)).concat(this.convertToDto(dbps))
-				});
-			}
-		}
-	}
-
 	public $registerBreakpoints(DTOs: Array<ISourceMultiBreakpointDto | IFunctionBreakpointDto | IDataBreakpointDto>): Promise<void> {
 
-		for (let dto of DTOs) {
+		for (const dto of DTOs) {
 			if (dto.type === 'sourceMulti') {
 				const rawbps = dto.lines.map(l =>
 					<IBreakpointData>{
@@ -219,31 +242,34 @@ export class MainThreadDebugService implements MainThreadDebugServiceShape, IDeb
 		return undefined;
 	}
 
-	public $startDebugging(folder: UriComponents | undefined, nameOrConfig: string | IDebugConfiguration, options: IStartDebuggingOptions): Promise<boolean> {
+	public async $startDebugging(folder: UriComponents | undefined, nameOrConfig: string | IDebugConfiguration, options: IStartDebuggingOptions): Promise<boolean> {
 		const folderUri = folder ? uri.revive(folder) : undefined;
 		const launch = this.debugService.getConfigurationManager().getLaunch(folderUri);
 		const parentSession = this.getSession(options.parentSessionID);
+		const saveBeforeStart = typeof options.suppressSaveBeforeStart === 'boolean' ? !options.suppressSaveBeforeStart : undefined;
 		const debugOptions: IDebugSessionOptions = {
 			noDebug: options.noDebug,
 			parentSession,
 			lifecycleManagedByParent: options.lifecycleManagedByParent,
 			repl: options.repl,
 			compact: options.compact,
-			debugUI: options.debugUI,
-			compoundRoot: parentSession?.compoundRoot
+			compoundRoot: parentSession?.compoundRoot,
+			saveBeforeRestart: saveBeforeStart,
+
+			suppressDebugStatusbar: options.suppressDebugStatusbar,
+			suppressDebugToolbar: options.suppressDebugToolbar,
+			suppressDebugView: options.suppressDebugView,
 		};
-		return this.debugService.startDebugging(launch, nameOrConfig, debugOptions).then(success => {
-			return success;
-		}, err => {
-			return Promise.reject(new Error(err && err.message ? err.message : 'cannot start debugging'));
-		});
+		try {
+			return this.debugService.startDebugging(launch, nameOrConfig, debugOptions, saveBeforeStart);
+		} catch (err) {
+			throw new ErrorNoTelemetry(err && err.message ? err.message : 'cannot start debugging');
+		}
 	}
 
 	public $setDebugSessionName(sessionId: DebugSessionUUID, name: string): void {
 		const session = this.debugService.getModel().getSession(sessionId);
-		if (session) {
-			session.setName(name);
-		}
+		session?.setName(name);
 	}
 
 	public $customDebugAdapterRequest(sessionId: DebugSessionUUID, request: string, args: any): Promise<any> {
@@ -253,11 +279,11 @@ export class MainThreadDebugService implements MainThreadDebugServiceShape, IDeb
 				if (response && response.success) {
 					return response.body;
 				} else {
-					return Promise.reject(new Error(response ? response.message : 'custom request failed'));
+					return Promise.reject(new ErrorNoTelemetry(response ? response.message : 'custom request failed'));
 				}
 			});
 		}
-		return Promise.reject(new Error('debug session not found'));
+		return Promise.reject(new ErrorNoTelemetry('debug session not found'));
 	}
 
 	public $getDebugProtocolBreakpoint(sessionId: DebugSessionUUID, breakpoinId: string): Promise<DebugProtocol.Breakpoint | undefined> {
@@ -265,27 +291,25 @@ export class MainThreadDebugService implements MainThreadDebugServiceShape, IDeb
 		if (session) {
 			return Promise.resolve(session.getDebugProtocolBreakpoint(breakpoinId));
 		}
-		return Promise.reject(new Error('debug session not found'));
+		return Promise.reject(new ErrorNoTelemetry('debug session not found'));
 	}
 
 	public $stopDebugging(sessionId: DebugSessionUUID | undefined): Promise<void> {
 		if (sessionId) {
 			const session = this.debugService.getModel().getSession(sessionId, true);
 			if (session) {
-				return this.debugService.stopSession(session);
+				return this.debugService.stopSession(session, isSessionAttach(session));
 			}
 		} else {	// stop all
 			return this.debugService.stopSession(undefined);
 		}
-		return Promise.reject(new Error('debug session not found'));
+		return Promise.reject(new ErrorNoTelemetry('debug session not found'));
 	}
 
 	public $appendDebugConsole(value: string): void {
 		// Use warning as severity to get the orange color for messages coming from the debug extension
 		const session = this.debugService.getViewModel().focusedSession;
-		if (session) {
-			session.appendToRepl(value, severity.Warning);
-		}
+		session?.appendToRepl({ output: value, sev: severity.Warning });
 	}
 
 	public $acceptDAMessage(handle: number, message: DebugProtocol.ProtocolMessage) {

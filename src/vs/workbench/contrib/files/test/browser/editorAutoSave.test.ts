@@ -7,7 +7,7 @@ import * as assert from 'assert';
 import { Event } from 'vs/base/common/event';
 import { toResource } from 'vs/base/test/common/utils';
 import { IEditorService } from 'vs/workbench/services/editor/common/editorService';
-import { TestFilesConfigurationService, workbenchInstantiationService, TestServiceAccessor, registerTestFileEditor, createEditorPart } from 'vs/workbench/test/browser/workbenchTestServices';
+import { TestFilesConfigurationService, workbenchInstantiationService, TestServiceAccessor, registerTestFileEditor, createEditorPart, TestEnvironmentService, TestFileService } from 'vs/workbench/test/browser/workbenchTestServices';
 import { IResolvedTextFileEditorModel, ITextFileEditorModel } from 'vs/workbench/services/textfile/common/textfiles';
 import { IEditorGroupsService } from 'vs/workbench/services/editor/common/editorGroupsService';
 import { DisposableStore } from 'vs/base/common/lifecycle';
@@ -19,6 +19,10 @@ import { TestConfigurationService } from 'vs/platform/configuration/test/common/
 import { IFilesConfigurationService } from 'vs/workbench/services/filesConfiguration/common/filesConfigurationService';
 import { IContextKeyService } from 'vs/platform/contextkey/common/contextkey';
 import { MockContextKeyService } from 'vs/platform/keybinding/test/common/mockKeybindingService';
+import { DEFAULT_EDITOR_ASSOCIATION } from 'vs/workbench/common/editor';
+import { TestWorkspace } from 'vs/platform/workspace/test/common/testWorkspace';
+import { TestContextService } from 'vs/workbench/test/common/workbenchTestServices';
+import { UriIdentityService } from 'vs/platform/uriIdentity/common/uriIdentityService';
 
 suite('EditorAutoSave', () => {
 
@@ -33,7 +37,7 @@ suite('EditorAutoSave', () => {
 	});
 
 	async function createEditorAutoSave(autoSaveConfig: object): Promise<TestServiceAccessor> {
-		const instantiationService = workbenchInstantiationService();
+		const instantiationService = workbenchInstantiationService(undefined, disposables);
 
 		const configurationService = new TestConfigurationService();
 		configurationService.setUserConfiguration('files', autoSaveConfig);
@@ -41,11 +45,14 @@ suite('EditorAutoSave', () => {
 
 		instantiationService.stub(IFilesConfigurationService, new TestFilesConfigurationService(
 			<IContextKeyService>instantiationService.createInstance(MockContextKeyService),
-			configurationService
+			configurationService,
+			new TestContextService(TestWorkspace),
+			TestEnvironmentService,
+			new UriIdentityService(new TestFileService()),
+			new TestFileService()
 		));
 
 		const part = await createEditorPart(instantiationService, disposables);
-
 		instantiationService.stub(IEditorGroupsService, part);
 
 		const editorService: EditorService = instantiationService.createInstance(EditorService);
@@ -78,7 +85,7 @@ suite('EditorAutoSave', () => {
 		const accessor = await createEditorAutoSave({ autoSave: 'onFocusChange' });
 
 		const resource = toResource.call(this, '/path/index.txt');
-		await accessor.editorService.openEditor({ resource, forceFile: true });
+		await accessor.editorService.openEditor({ resource, options: { override: DEFAULT_EDITOR_ASSOCIATION.id } });
 
 		const model = await accessor.textFileService.files.resolve(resource) as IResolvedTextFileEditorModel;
 		model.textEditorModel.setValue('Super Good');

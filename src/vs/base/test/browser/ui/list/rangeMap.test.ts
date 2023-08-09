@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import * as assert from 'assert';
-import { RangeMap, groupIntersect, consolidate } from 'vs/base/browser/ui/list/rangeMap';
+import { consolidate, groupIntersect, RangeMap } from 'vs/base/browser/ui/list/rangeMap';
 import { Range } from 'vs/base/common/range';
 
 suite('RangeMap', () => {
@@ -340,6 +340,86 @@ suite('RangeMap', () => {
 			assert.strictEqual(rangeMap.positionAt(2), 20);
 			assert.strictEqual(rangeMap.positionAt(3), 30);
 			assert.strictEqual(rangeMap.positionAt(4), -1);
+		});
+	});
+});
+
+suite('RangeMap with top padding', () => {
+	let rangeMap: RangeMap;
+
+	setup(() => {
+		rangeMap = new RangeMap(10);
+	});
+
+	test('empty', () => {
+		assert.strictEqual(rangeMap.size, 10);
+		assert.strictEqual(rangeMap.count, 0);
+	});
+
+	const one = { size: 1 };
+	const five = { size: 5 };
+	const ten = { size: 10 };
+
+	test('length & count', () => {
+		rangeMap.splice(0, 0, [one]);
+		assert.strictEqual(rangeMap.size, 11);
+		assert.strictEqual(rangeMap.count, 1);
+	});
+
+	test('length & count #2', () => {
+		rangeMap.splice(0, 0, [one, one, one, one, one]);
+		assert.strictEqual(rangeMap.size, 15);
+		assert.strictEqual(rangeMap.count, 5);
+	});
+
+	test('length & count #3', () => {
+		rangeMap.splice(0, 0, [five]);
+		assert.strictEqual(rangeMap.size, 15);
+		assert.strictEqual(rangeMap.count, 1);
+	});
+
+	test('length & count #4', () => {
+		rangeMap.splice(0, 0, [five, five, five, five, five]);
+		assert.strictEqual(rangeMap.size, 35);
+		assert.strictEqual(rangeMap.count, 5);
+	});
+
+	test('insert', () => {
+		rangeMap.splice(0, 0, [five, five, five, five, five]);
+		assert.strictEqual(rangeMap.size, 35);
+		assert.strictEqual(rangeMap.count, 5);
+
+		rangeMap.splice(0, 0, [five, five, five, five, five]);
+		assert.strictEqual(rangeMap.size, 60);
+		assert.strictEqual(rangeMap.count, 10);
+
+		rangeMap.splice(5, 0, [ten, ten]);
+		assert.strictEqual(rangeMap.size, 80);
+		assert.strictEqual(rangeMap.count, 12);
+
+		rangeMap.splice(12, 0, [{ size: 200 }]);
+		assert.strictEqual(rangeMap.size, 280);
+		assert.strictEqual(rangeMap.count, 13);
+	});
+
+	suite('indexAt, positionAt', () => {
+		test('empty', () => {
+			assert.strictEqual(rangeMap.indexAt(0), 0);
+			assert.strictEqual(rangeMap.indexAt(10), 0);
+			assert.strictEqual(rangeMap.indexAt(-1), -1);
+			assert.strictEqual(rangeMap.positionAt(0), -1);
+			assert.strictEqual(rangeMap.positionAt(10), -1);
+			assert.strictEqual(rangeMap.positionAt(-1), -1);
+		});
+
+		test('simple', () => {
+			rangeMap.splice(0, 0, [one]);
+			assert.strictEqual(rangeMap.indexAt(0), 0);
+			assert.strictEqual(rangeMap.indexAt(1), 0);
+			assert.strictEqual(rangeMap.indexAt(10), 0);
+			assert.strictEqual(rangeMap.indexAt(11), 1);
+			assert.strictEqual(rangeMap.positionAt(0), 10);
+			assert.strictEqual(rangeMap.positionAt(1), -1);
 		});
 	});
 });

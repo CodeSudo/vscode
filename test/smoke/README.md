@@ -8,12 +8,6 @@ Make sure you are on **Node v12.x**.
 # Build extensions in the VS Code repo (if needed)
 yarn && yarn compile
 
-# Install Dependencies and Compile
-yarn --cwd test/smoke
-
-# Prepare OSS in repo*
-node build/lib/preLaunch.js
-
 # Dev (Electron)
 yarn smoketest
 
@@ -47,7 +41,7 @@ yarn --cwd test/smoke
 #### Web
 
 There is no support for testing an old version to a new one yet.
-Instead, simply configure the `--build` command line argument to point to the absolute path of the extracted server web build folder (e.g. `<rest of path here>/vscode-server-darwin-web` for macOS). The server web build is available from the builds page (see previous subsection).
+Instead, simply configure the `--build` command line argument to point to the absolute path of the extracted server web build folder (e.g. `<rest of path here>/vscode-server-darwin-x64-web` for macOS). The server web build is available from the builds page (see previous subsection).
 
 **macOS**: if you have downloaded the server with web bits, make sure to run the following command before unzipping it to avoid security issues on startup:
 
@@ -61,7 +55,9 @@ xattr -d com.apple.quarantine <path to server with web folder zip>
 
 - `--verbose` logs all the low level driver calls made to Code;
 - `-f PATTERN` (alias `-g PATTERN`) filters the tests to be run. You can also use pretty much any mocha argument;
-- `--screenshots SCREENSHOT_DIR` captures screenshots when tests fail.
+- `--headless` will run playwright in headless mode when `--web` is used.
+
+**Note**: you can enable verbose logging of playwright library by setting a `DEBUG` environment variable before running the tests (https://playwright.dev/docs/debug#verbose-api-logs), for example to `pw:browser`.
 
 ### Develop
 
@@ -80,7 +76,7 @@ On Windows, check for the folder `C:\Users\<username>\AppData\Local\Temp\t`. If 
 
 - Beware of workbench **state**. The tests within a single suite will share the same state.
 
-- Beware of **singletons**. This evil can, and will, manifest itself under the form of FS paths, TCP ports, IPC handles. Whenever writing a test, or setting up more smoke test architecture, make sure it can run simultaneously with any other tests and even itself.	All test suites should be able to run many times in parallel.
+- Beware of **singletons**. This evil can, and will, manifest itself under the form of FS paths, TCP ports, IPC handles. Whenever writing a test, or setting up more smoke test architecture, make sure it can run simultaneously with any other tests and even itself. All test suites should be able to run many times in parallel.
 
 - Beware of **focus**. **Never** depend on DOM elements having focus using `.focused` classes or `:focus` pseudo-classes, since they will lose that state as soon as another window appears on top of the running VS Code window. A safe approach which avoids this problem is to use the `waitForActiveElement` API. Many tests use this whenever they need to wait for a specific element to _have focus_.
 

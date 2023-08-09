@@ -7,8 +7,6 @@ node_modules/
 extensions/**/dist/
 /out*/
 /extensions/**/out/
-src/vs/server
-resources/server
 build/node_modules
 coverage/
 test_data/
@@ -17,3 +15,6 @@ yarn-error.log
 vscode.lsif
 vscode.db
 /.profile-oss
+/cli/target
+/cli/openssl
+product.overrides.json

@@ -11,12 +11,14 @@ import { flakySuite } from 'vs/base/test/node/testUtils';
 flakySuite('ID', () => {
 
 	test('getMachineId', async function () {
-		const id = await getMachineId();
+		const errors = [];
+		const id = await getMachineId(err => errors.push(err));
 		assert.ok(id);
+		assert.strictEqual(errors.length, 0);
 	});
 
 	test('getMac', async () => {
-		const macAddress = await getMac();
+		const macAddress = getMac();
 		assert.ok(/^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$/.test(macAddress), `Expected a MAC address, got: ${macAddress}`);
 	});
 });

@@ -47,7 +47,7 @@ suite('Workbench - TerminalProfiles', () => {
 				const configurationService = new TestConfigurationService({ terminal: { integrated: config } });
 				const profiles = await detectAvailableProfiles(undefined, undefined, false, configurationService, process.env, fsProvider, undefined, undefined, undefined);
 				const expected = [
-					{ profileName: 'Git Bash', path: 'C:\\Program Files\\Git\\bin\\bash.exe', args: ['--login'], isDefault: true }
+					{ profileName: 'Git Bash', path: 'C:\\Program Files\\Git\\bin\\bash.exe', args: ['--login', '-i'], isDefault: true }
 				];
 				profilesEqual(profiles, expected);
 			});
@@ -92,7 +92,7 @@ suite('Workbench - TerminalProfiles', () => {
 				const expected = [{ profileName: 'Git Bash', path: 'C:\\Program Files\\Git\\bin\\bash.exe', args: [], isAutoDetected: undefined, overrideName: undefined, isDefault: true }];
 				profilesEqual(profiles, expected);
 			});
-			suite('pwsh source detection/fallback', async () => {
+			suite('pwsh source detection/fallback', () => {
 				const pwshSourceConfig = ({
 					profiles: {
 						windows: {
@@ -200,8 +200,8 @@ suite('Workbench - TerminalProfiles', () => {
 				const configurationService = new TestConfigurationService({ terminal: { integrated: onPathConfig } });
 				const profiles = await detectAvailableProfiles(undefined, undefined, true, configurationService, process.env, fsProvider, undefined, undefined, undefined);
 				const expected: ITerminalProfile[] = [
-					{ profileName: 'fakeshell1', path: 'fakeshell1', isDefault: true },
-					{ profileName: 'fakeshell3', path: 'fakeshell3', isDefault: true }
+					{ profileName: 'fakeshell1', path: '/bin/fakeshell1', isFromPath: true, isDefault: true },
+					{ profileName: 'fakeshell3', path: '/bin/fakeshell3', isFromPath: true, isDefault: true }
 				];
 				profilesEqual(profiles, expected);
 			});
@@ -213,7 +213,7 @@ suite('Workbench - TerminalProfiles', () => {
 				const configurationService = new TestConfigurationService({ terminal: { integrated: onPathConfig } });
 				const profiles = await detectAvailableProfiles(undefined, undefined, true, configurationService, process.env, fsProvider, undefined, undefined, undefined);
 				const expected: ITerminalProfile[] = [
-					{ profileName: 'fakeshell1', path: 'fakeshell1', isDefault: true }
+					{ profileName: 'fakeshell1', path: '/bin/fakeshell1', isFromPath: true, isDefault: true }
 				];
 				profilesEqual(profiles, expected);
 			});
@@ -238,5 +238,5 @@ suite('Workbench - TerminalProfiles', () => {
 
 export interface ITestTerminalConfig {
 	profiles: ITerminalProfiles;
-	useWslProfiles: boolean
+	useWslProfiles: boolean;
 }
